@@ -1,47 +1,63 @@
-//! Backend for helix-picker: the fuzzy file picker and the workspace-wide search.
+//! Backend for helix-picker: the fuzzy file picker, the workspace-wide search and the preview's
+//! syntax highlighting.
 //!
-//! Built on the libraries Helix uses for its pickers: nucleo for fuzzy matching, and ignore and
-//! grep-searcher (from ripgrep) for walking and searching the workspace. Requests arrive on stdin
-//! and results leave on stdout, one JSON object per line. Results are pushed as snapshots of the
-//! window of matches the picker currently shows, so the extension never holds the full list.
+//! Built on the libraries Helix uses: nucleo for fuzzy matching, ignore and grep-searcher (from
+//! ripgrep) for walking and searching the workspace, and tree-sitter with Helix's own grammars,
+//! queries and themes for highlighting. Requests arrive on stdin and results leave on stdout, one
+//! JSON object per line. Results are pushed as snapshots of the window of rows the picker
+//! currently shows, so the extension never holds the full list.
 
-use std::io::{self, BufRead, Write};
+use std::collections::HashSet;
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use grep_matcher::Matcher as _;
-use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::{sinks, BinaryDetection, SearcherBuilder};
+use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Injector, Matcher, Nucleo};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Search results beyond this are dropped; nobody scrolls that far in a picker.
-const MAX_SEARCH_RESULTS: usize = 100_000;
-/// Result lines are cut to this many characters; the preview shows the whole line.
-const MAX_LINE_CHARS: usize = 300;
-/// A global search restarts only after typing pauses this long.
-const SEARCH_DEBOUNCE: Duration = Duration::from_millis(80);
+mod highlight;
+mod search;
+
+/// Matching files beyond this are dropped; nobody scrolls that far in a picker.
+const MAX_SEARCH_FILES: usize = 10_000;
+/// A search restarts only after typing pauses this long.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 /// While results are still streaming in, snapshots go out at most this often.
 const STREAM_INTERVAL: Duration = Duration::from_millis(30);
+/// While a search runs, results are re-ranked at most this often, so rows don't jump on every frame.
+const RANK_INTERVAL: Duration = Duration::from_millis(250);
+/// Files larger than this are not read for highlighting.
+const MAX_HIGHLIGHT_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 enum Request {
     /// Start a file picker over these folders.
     Files { roots: Vec<PathBuf> },
-    /// Start a global search over these folders; the query is a regex.
-    Search { roots: Vec<PathBuf> },
+    /// Start a workspace search over these folders. `active` and `open` are the user's current
+    /// and open files, for ranking; `theme` is the Helix theme for highlighting result lines.
+    Search {
+        roots: Vec<PathBuf>,
+        #[serde(default)]
+        active: Option<PathBuf>,
+        #[serde(default)]
+        open: Vec<PathBuf>,
+        theme: String,
+    },
     Query { text: String },
-    /// The slice of matches the picker shows.
+    /// The slice of rows the picker shows.
     View { offset: u32, count: u32 },
     Close,
+    /// Highlight lines `first..last` (0-based) of a file for the preview.
+    Highlight { id: u64, path: PathBuf, first: usize, last: usize, theme: String },
 }
 
 enum Event {
@@ -51,30 +67,49 @@ enum Event {
     InputClosed,
 }
 
+enum Job {
+    Preview { id: u64, path: PathBuf, first: usize, last: usize, theme: String },
+    /// Result lines: key, file (for its language) and text.
+    Rows { theme: String, rows: Vec<(String, PathBuf, String)> },
+}
+
+/// A file picker entry.
 struct Item {
     /// Path relative to its root; shown in the list and matched against the query.
     display: String,
     path: PathBuf,
-    /// Set for global search results.
-    hit: Option<Hit>,
 }
 
-struct Hit {
-    line: u64,
-    text: String,
-    /// Character ranges of the regex matches within `text`.
-    ranges: Vec<(u32, u32)>,
+struct SearchRun {
+    hits: Arc<Mutex<Vec<search::FileHit>>>,
+    stats: Arc<search::Stats>,
+}
+
+enum Mode {
+    Files {
+        nucleo: Nucleo<Item>,
+        matcher: Matcher,
+    },
+    Search {
+        context: Arc<search::Context>,
+        theme: String,
+        run: Option<SearchRun>,
+        /// Ranked order of the first `ranked` hits; later hits follow in arrival order.
+        order: Vec<usize>,
+        ranked: usize,
+        ranked_at: Instant,
+        /// Result lines already sent for highlighting in this run.
+        highlighted: HashSet<String>,
+    },
 }
 
 struct Session {
-    search: bool,
+    mode: Mode,
     roots: Vec<PathBuf>,
-    nucleo: Nucleo<Item>,
-    matcher: Matcher,
     query: String,
     /// Cleared by the walker or searcher thread of the current run when it finishes.
     producing: Arc<AtomicBool>,
-    /// For global search: when to restart the search after the last keystroke.
+    /// For search: when to restart after the last keystroke.
     restart_at: Option<Instant>,
     error: Option<String>,
     offset: u32,
@@ -82,10 +117,12 @@ struct Session {
     /// Something the picker shows changed since the last snapshot.
     dirty: bool,
     last_running: bool,
+    last_hits: usize,
 }
 
 struct State {
     tx: Sender<Event>,
+    jobs: Sender<Job>,
     /// Pending notification from nucleo, so a burst of batches sends one event.
     matched_pending: Arc<AtomicBool>,
     /// Bumped for every new walk or search; threads of an older run stop when they see it.
@@ -94,6 +131,25 @@ struct State {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let runtime = args.iter().position(|a| a == "--runtime").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let dirs = highlight::runtime_dirs(runtime.as_deref());
+
+    // Debugging aid: `hxp-core --highlight FILE [FIRST LAST [THEME]]` prints the highlighted lines.
+    if args.get(1).map(String::as_str) == Some("--highlight") {
+        let path = Path::new(&args[2]);
+        let first = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(0);
+        let last = args.get(4).and_then(|a| a.parse().ok()).unwrap_or(40);
+        let mut highlighter = highlight::Highlighter::new(dirs);
+        highlighter.set_theme(args.get(5).map_or("gruvbox_light_hard", String::as_str));
+        let source = std::fs::read_to_string(path).unwrap_or_default();
+        match highlight::lang_for(path).and_then(|lang| highlighter.highlight(lang, &source, first, last)) {
+            Some(lines) => lines.iter().for_each(|l| println!("{l}")),
+            None => println!("(no highlighting)"),
+        }
+        return;
+    }
+
     let (tx, rx) = mpsc::channel();
     let reader_tx = tx.clone();
     thread::spawn(move || {
@@ -110,9 +166,12 @@ fn main() {
         }
         let _ = reader_tx.send(Event::InputClosed);
     });
+    let (jobs, job_rx) = mpsc::channel();
+    thread::spawn(move || highlight_worker(job_rx, dirs));
 
     let mut state = State {
         tx,
+        jobs,
         matched_pending: Arc::new(AtomicBool::new(false)),
         generation: Arc::new(AtomicU64::new(0)),
         session: None,
@@ -137,27 +196,38 @@ impl State {
     fn handle(&mut self, request: Request) {
         match request {
             Request::Files { roots } => {
-                let mut session = self.new_session(false, roots);
-                let injector = session.nucleo.injector();
+                let notify = {
+                    let (tx, pending) = (self.tx.clone(), self.matched_pending.clone());
+                    Arc::new(move || {
+                        if !pending.swap(true, Ordering::Relaxed) {
+                            let _ = tx.send(Event::Matched);
+                        }
+                    })
+                };
+                let nucleo = Nucleo::new(Config::DEFAULT.match_paths(), notify, None, 1);
+                let injector = nucleo.injector();
+                let session = self.new_session(Mode::Files { nucleo, matcher: Matcher::new(Config::DEFAULT.match_paths()) }, roots);
                 let run = self.generation.load(Ordering::Relaxed);
                 let (generation, producing, roots) = (self.generation.clone(), session.producing.clone(), session.roots.clone());
                 thread::spawn(move || walk_files(&roots, injector, &generation, run, &producing));
-                session.dirty = true;
                 self.session = Some(session);
             }
-            Request::Search { roots } => {
-                let session = self.new_session(true, roots);
+            Request::Search { roots, active, open, theme } => {
+                let context = Arc::new(search::Context { roots: roots.clone(), active, open });
+                let mode = Mode::Search { context, theme, run: None, order: Vec::new(), ranked: 0, ranked_at: Instant::now(), highlighted: HashSet::new() };
+                let session = self.new_session(mode, roots);
                 session.producing.store(false, Ordering::Relaxed);
                 self.session = Some(session);
             }
             Request::Query { text } => {
                 let Some(session) = self.session.as_mut() else { return };
-                if session.search {
-                    session.restart_at = Some(Instant::now() + SEARCH_DEBOUNCE);
-                } else {
-                    let append = text.starts_with(&session.query);
-                    session.nucleo.pattern.reparse(0, &text, CaseMatching::Smart, Normalization::Smart, append);
-                    session.offset = 0;
+                match &mut session.mode {
+                    Mode::Search { .. } => session.restart_at = Some(Instant::now() + SEARCH_DEBOUNCE),
+                    Mode::Files { nucleo, .. } => {
+                        let append = text.starts_with(&session.query);
+                        nucleo.pattern.reparse(0, &text, CaseMatching::Smart, Normalization::Smart, append);
+                        session.offset = 0;
+                    }
                 }
                 session.query = text;
                 session.dirty = true;
@@ -172,22 +242,17 @@ impl State {
                 self.generation.fetch_add(1, Ordering::Relaxed);
                 self.session = None;
             }
+            Request::Highlight { id, path, first, last, theme } => {
+                let _ = self.jobs.send(Job::Preview { id, path, first, last, theme });
+            }
         }
     }
 
-    fn new_session(&mut self, search: bool, roots: Vec<PathBuf>) -> Session {
+    fn new_session(&mut self, mode: Mode, roots: Vec<PathBuf>) -> Session {
         self.generation.fetch_add(1, Ordering::Relaxed);
-        let (tx, pending) = (self.tx.clone(), self.matched_pending.clone());
-        let notify = Arc::new(move || {
-            if !pending.swap(true, Ordering::Relaxed) {
-                let _ = tx.send(Event::Matched);
-            }
-        });
         Session {
-            search,
+            mode,
             roots,
-            nucleo: Nucleo::new(Config::DEFAULT.match_paths(), notify, None, 1),
-            matcher: Matcher::new(Config::DEFAULT.match_paths()),
             query: String::new(),
             producing: Arc::new(AtomicBool::new(true)),
             restart_at: None,
@@ -196,6 +261,7 @@ impl State {
             count: 0,
             dirty: true,
             last_running: true,
+            last_hits: 0,
         }
     }
 
@@ -219,45 +285,68 @@ impl State {
         if !session.restart_at.is_some_and(|at| Instant::now() >= at) {
             return;
         }
+        let Mode::Search { context, run: current, order, ranked, highlighted, .. } = &mut session.mode else { return };
         session.restart_at = None;
         session.error = None;
         session.offset = 0;
         session.dirty = true;
+        *current = None;
+        order.clear();
+        *ranked = 0;
+        highlighted.clear();
         let run = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        session.nucleo.restart(true);
         session.producing = Arc::new(AtomicBool::new(false));
-        if session.query.is_empty() {
+        if session.query.trim().is_empty() {
             return;
         }
-        let matcher = match RegexMatcherBuilder::new().case_smart(true).build(&session.query) {
-            Ok(matcher) => matcher,
+        let query = match search::parse(&session.query) {
+            Ok(query) if !query.terms.is_empty() => Arc::new(query),
+            Ok(_) => return,
             Err(err) => {
-                session.error = Some(err.to_string());
+                session.error = Some(err);
                 return;
             }
         };
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let stats = Arc::new(search::Stats::new(query.terms.len()));
+        *current = Some(SearchRun { hits: hits.clone(), stats: stats.clone() });
         session.producing.store(true, Ordering::Relaxed);
-        let injector = session.nucleo.injector();
-        let (generation, producing, roots) = (self.generation.clone(), session.producing.clone(), session.roots.clone());
-        thread::spawn(move || search(&roots, &matcher, injector, &generation, run, &producing));
+        let (generation, producing, roots, context) = (self.generation.clone(), session.producing.clone(), session.roots.clone(), context.clone());
+        thread::spawn(move || search_files(&roots, &query, &context, &hits, &stats, &generation, run, &producing));
     }
 
-    /// Lets nucleo pick up new items and matches, and sends a snapshot if the visible part changed.
+    /// Sends a snapshot if the visible part changed.
     fn refresh(&mut self) {
         let Some(session) = self.session.as_mut() else { return };
-        let status = session.nucleo.tick(10);
-        let running = status.running || session.producing.load(Ordering::Relaxed);
-        if !(status.changed || session.dirty || running != session.last_running) {
+        let producing = session.producing.load(Ordering::Relaxed);
+        let (changed, running) = match &mut session.mode {
+            Mode::Files { nucleo, .. } => {
+                let status = nucleo.tick(10);
+                (status.changed, status.running || producing)
+            }
+            Mode::Search { run, .. } => {
+                let hits = run.as_ref().map_or(0, |r| r.hits.lock().unwrap().len());
+                let changed = hits != session.last_hits;
+                session.last_hits = hits;
+                (changed, producing)
+            }
+        };
+        if !(changed || session.dirty || running != session.last_running) {
             return;
         }
         session.dirty = false;
         session.last_running = running;
-        emit(&snapshot(session, running));
+        let snapshot = match &session.mode {
+            Mode::Files { .. } => files_snapshot(session, running),
+            Mode::Search { .. } => search_snapshot(session, running, &self.jobs),
+        };
+        emit(&snapshot);
     }
 }
 
-fn snapshot(session: &mut Session, running: bool) -> Value {
-    let snap = session.nucleo.snapshot();
+fn files_snapshot(session: &mut Session, running: bool) -> Value {
+    let Mode::Files { nucleo, matcher } = &mut session.mode else { unreachable!() };
+    let snap = nucleo.snapshot();
     let matched = snap.matched_item_count();
     let start = session.offset.min(matched);
     let end = start.saturating_add(session.count).min(matched);
@@ -266,32 +355,76 @@ fn snapshot(session: &mut Session, running: bool) -> Value {
     let items: Vec<Value> = snap
         .matched_items(start..end)
         .map(|item| {
-            let data = item.data;
-            let mut out = json!({ "d": data.display, "p": data.path });
-            if !session.search {
-                indices.clear();
-                pattern.indices(item.matcher_columns[0].slice(..), &mut session.matcher, &mut indices);
-                indices.sort_unstable();
-                indices.dedup();
-                out["i"] = json!(indices);
-            }
-            if let Some(hit) = &data.hit {
-                out["l"] = json!(hit.line);
-                out["x"] = json!(hit.text);
-                out["r"] = json!(hit.ranges);
-            }
-            out
+            indices.clear();
+            pattern.indices(item.matcher_columns[0].slice(..), matcher, &mut indices);
+            indices.sort_unstable();
+            indices.dedup();
+            json!({ "d": item.data.display, "p": item.data.path, "i": indices })
         })
         .collect();
+    json!({ "t": "snap", "kind": "files", "total": snap.item_count(), "matched": matched, "offset": start, "items": items, "running": running, "error": session.error })
+}
+
+/// Search results as rows: each file as a header row, followed by its matching lines.
+fn search_snapshot(session: &mut Session, running: bool, jobs: &Sender<Job>) -> Value {
+    let Mode::Search { run, order, ranked, ranked_at, theme, highlighted, .. } = &mut session.mode else { unreachable!() };
+    let Some(run) = run else {
+        return json!({ "t": "snap", "kind": "search", "total": 0, "matched": 0, "offset": 0, "items": [], "running": running, "error": session.error, "lines": 0, "searched": 0 });
+    };
+    let hits = run.hits.lock().unwrap();
+    if hits.len() != *ranked && (!running || ranked_at.elapsed() >= RANK_INTERVAL) {
+        *order = search::rank(&hits, &run.stats);
+        *ranked = hits.len();
+        *ranked_at = Instant::now();
+    }
+    let files: Vec<usize> = order.iter().copied().chain(*ranked..hits.len()).collect();
+    let rows: usize = files.iter().map(|&f| 1 + hits[f].lines.len()).sum();
+    let lines: usize = files.iter().map(|&f| hits[f].line_count).sum();
+    let start = (session.offset as usize).min(rows);
+    let end = (start + session.count as usize).min(rows);
+    let mut items = Vec::new();
+    let mut to_highlight = Vec::new();
+    let mut row = 0;
+    for &f in &files {
+        let hit = &hits[f];
+        let size = 1 + hit.lines.len();
+        if row + size <= start {
+            row += size;
+            continue;
+        }
+        if row >= end {
+            break;
+        }
+        for i in 0..size {
+            if row >= start && row < end {
+                if i == 0 {
+                    items.push(json!({ "k": "f", "d": hit.display, "p": hit.path, "n": hit.line_count, "l": hit.lines.first().map(|l| l.line) }));
+                } else {
+                    let line = &hit.lines[i - 1];
+                    let key = format!("{}:{}", hit.path.display(), line.line);
+                    if highlighted.insert(key.clone()) {
+                        to_highlight.push((key, hit.path.clone(), line.text.clone()));
+                    }
+                    items.push(json!({ "k": "m", "d": hit.display, "p": hit.path, "l": line.line, "x": line.text, "r": line.ranges, "def": line.definition }));
+                }
+            }
+            row += 1;
+        }
+    }
+    if !to_highlight.is_empty() {
+        let _ = jobs.send(Job::Rows { theme: theme.clone(), rows: to_highlight });
+    }
     json!({
         "t": "snap",
-        "kind": if session.search { "search" } else { "files" },
-        "total": snap.item_count(),
-        "matched": matched,
+        "kind": "search",
+        "total": files.len(),
+        "matched": rows,
         "offset": start,
         "items": items,
         "running": running,
         "error": session.error,
+        "lines": lines,
+        "searched": run.stats.files.load(Ordering::Relaxed),
     })
 }
 
@@ -300,6 +433,46 @@ fn emit(value: &Value) {
     let _ = serde_json::to_writer(&mut out, value);
     let _ = out.write_all(b"\n");
     let _ = out.flush();
+}
+
+/// Highlights previews and result lines on its own thread, so the result list never waits for
+/// it. When jobs pile up (fast scrolling), only the newest preview is highlighted.
+fn highlight_worker(jobs: Receiver<Job>, dirs: Vec<PathBuf>) {
+    let mut highlighter = highlight::Highlighter::new(dirs);
+    while let Ok(first) = jobs.recv() {
+        let mut preview = None;
+        let mut rows = Vec::new();
+        for job in std::iter::once(first).chain(jobs.try_iter()) {
+            match job {
+                Job::Preview { .. } => preview = Some(job),
+                Job::Rows { theme, rows: more } => rows.push((theme, more)),
+            }
+        }
+        if let Some(Job::Preview { id, path, first, last, theme }) = preview {
+            highlighter.set_theme(&theme);
+            let lines = read_source(&path).and_then(|source| highlight::lang_for(&path).and_then(|lang| highlighter.highlight(lang, &source, first, last)));
+            emit(&json!({ "t": "hl", "id": id, "lines": lines }));
+        }
+        for (theme, rows) in rows {
+            highlighter.set_theme(&theme);
+            let out: Vec<Value> = rows
+                .iter()
+                .filter_map(|(key, path, text)| {
+                    let html = highlighter.highlight(highlight::lang_for(path)?, text, 0, 1)?.into_iter().next()?;
+                    Some(json!({ "key": key, "html": html }))
+                })
+                .collect();
+            if !out.is_empty() {
+                emit(&json!({ "t": "hlrows", "rows": out }));
+            }
+        }
+    }
+}
+
+fn read_source(path: &Path) -> Option<String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).ok()?.take(MAX_HIGHLIGHT_BYTES).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Walks the roots like Helix's file picker: hidden files skipped, .gitignore and .ignore honored,
@@ -326,10 +499,6 @@ fn display_path(path: &Path, roots: &[PathBuf]) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn push(injector: &Injector<Item>, item: Item) {
-    injector.push(item, |item, columns| columns[0] = item.display.as_str().into());
-}
-
 fn walk_files(roots: &[PathBuf], injector: Injector<Item>, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
     walker(roots).build_parallel().run(|| {
         let injector = injector.clone();
@@ -340,7 +509,8 @@ fn walk_files(roots: &[PathBuf], injector: Injector<Item>, generation: &AtomicU6
             let Ok(entry) = entry else { return WalkState::Continue };
             if entry.file_type().is_some_and(|t| t.is_file()) {
                 let path = entry.into_path();
-                push(&injector, Item { display: display_path(&path, roots), path, hit: None });
+                let item = Item { display: display_path(&path, roots), path };
+                injector.push(item, |item, columns| columns[0] = item.display.as_str().into());
             }
             WalkState::Continue
         })
@@ -348,53 +518,31 @@ fn walk_files(roots: &[PathBuf], injector: Injector<Item>, generation: &AtomicU6
     producing.store(false, Ordering::Relaxed);
 }
 
-fn search(roots: &[PathBuf], matcher: &RegexMatcher, injector: Injector<Item>, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
-    let found = AtomicUsize::new(0);
+#[allow(clippy::too_many_arguments)]
+fn search_files(roots: &[PathBuf], query: &search::Query, context: &search::Context, hits: &Mutex<Vec<search::FileHit>>, stats: &search::Stats, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
     walker(roots).build_parallel().run(|| {
-        let (injector, matcher, found) = (injector.clone(), matcher.clone(), &found);
-        let mut searcher = SearcherBuilder::new()
-            .binary_detection(BinaryDetection::quit(b'\x00'))
-            .line_number(true)
-            .build();
+        let mut searcher = SearcherBuilder::new().binary_detection(BinaryDetection::quit(b'\x00')).line_number(true).build();
+        let mut definitions = search::Definitions::default();
         Box::new(move |entry| {
-            if generation.load(Ordering::Relaxed) != run || found.load(Ordering::Relaxed) >= MAX_SEARCH_RESULTS {
+            if generation.load(Ordering::Relaxed) != run {
                 return WalkState::Quit;
             }
             let Ok(entry) = entry else { return WalkState::Continue };
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
             }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             let path = entry.path();
             let display = display_path(path, roots);
-            let _ = searcher.search_path(&matcher, path, sinks::Lossy(|line, text| {
-                if generation.load(Ordering::Relaxed) != run {
-                    return Ok(false);
+            if let Some(hit) = search::search_file(query, &mut searcher, &mut definitions, path, &display, size, stats, context) {
+                let mut hits = hits.lock().unwrap();
+                hits.push(hit);
+                if hits.len() >= MAX_SEARCH_FILES {
+                    return WalkState::Quit;
                 }
-                let (text, ranges) = clip_line(&matcher, text);
-                let hit = Hit { line, text, ranges };
-                push(&injector, Item { display: display.clone(), path: path.to_path_buf(), hit: Some(hit) });
-                Ok(found.fetch_add(1, Ordering::Relaxed) + 1 < MAX_SEARCH_RESULTS)
-            }));
+            }
             WalkState::Continue
         })
     });
     producing.store(false, Ordering::Relaxed);
-}
-
-/// Strips leading whitespace and the line ending, cuts long lines, and returns the regex match
-/// ranges as character offsets into the shortened line.
-fn clip_line(matcher: &RegexMatcher, line: &str) -> (String, Vec<(u32, u32)>) {
-    let line = line.trim_end_matches(['\n', '\r']).trim_start();
-    let cut = line.char_indices().nth(MAX_LINE_CHARS).map_or(line.len(), |(i, _)| i);
-    let text = &line[..cut];
-    let mut ranges = Vec::new();
-    let _ = matcher.find_iter(text.as_bytes(), |m| {
-        if m.start() < m.end() {
-            let start = text[..m.start()].chars().count() as u32;
-            let len = text[m.start()..m.end()].chars().count() as u32;
-            ranges.push((start, start + len));
-        }
-        true
-    });
-    (text.to_owned(), ranges)
 }

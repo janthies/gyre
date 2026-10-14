@@ -55,7 +55,12 @@
 				"helixPicker.previewTheme": {
 					"type": "string",
 					"default": "auto",
-					"markdownDescription": "Syntax theme of the preview, by its Shiki name (for example `gruvbox-light-hard`). `auto` derives it from the VS Code color theme."
+					"markdownDescription": "Helix theme for syntax highlighting (for example `gruvbox_light_hard`). `auto` uses the Helix theme named like the VS Code color theme, else Helix's GitHub light or dark theme."
+				},
+				"helixPicker.helixRuntime": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Helix runtime directory with `grammars/`, `queries/` and `themes/`. Empty searches `$HELIX_RUNTIME`, `~/.config/helix/runtime` and the usual install locations, including the snap."
 				}
 			}
 		},
@@ -73,11 +78,8 @@
 		]
 	},
 	"scripts": {
-		"compile": "tsc -p .",
+		"compile": "rm -rf out && tsc -p .",
 		"watch": "tsc -w -p ."
-	},
-	"dependencies": {
-		"shiki": "^4.5.0"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",

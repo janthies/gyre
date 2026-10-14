@@ -11,9 +11,15 @@ grep-matcher = "=0.1.7"
 grep-regex = "=0.1.12"
 grep-searcher = "=0.1.13"
 ignore = "=0.4.22"
+libloading = "0.8.9"
 nucleo = "0.5.0"
+regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+toml = "1.1.8"
+tree-sitter = "0.26.13"
+tree-sitter-highlight = "0.26.13"
+tree-sitter-language = "0.1.7"
 
 [profile.release]
 lto = true

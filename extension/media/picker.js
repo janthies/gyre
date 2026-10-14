@@ -33,6 +33,10 @@
 	let previewTimer;
 	/** Last preview per file and line; the highlighted version replaces the plain one. */
 	const previews = new Map();
+	/** Highlighted search result lines by "path:line", as sent and with the matches marked. */
+	const rowHtml = new Map();
+	const markedRows = new Map();
+	let searchLines = 0;
 
 	function escape(text) {
 		return text.replace(/[&<>]/g, c => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
@@ -59,11 +63,63 @@
 		return out + escape(chars.slice(pos).join(''));
 	}
 
-	function renderItem(item) {
-		if (item.l === undefined) {
-			return markChars(item.d, item.i);
+	/** Wraps the code point ranges [start, end) of highlighted HTML in <b>, keeping its spans. */
+	function markHtml(html, ranges) {
+		const template = document.createElement('template');
+		template.innerHTML = html;
+		const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+		const nodes = [];
+		while (walker.nextNode()) {
+			nodes.push(walker.currentNode);
 		}
-		return `<span class="location">${escape(item.d)}:${item.l}</span>  ${markRanges(item.x, item.r)}`;
+		let pos = 0;
+		for (const node of nodes) {
+			const chars = Array.from(node.data);
+			const start = pos;
+			pos += chars.length;
+			const cuts = ranges
+				.map(([a, b]) => [Math.max(a, start) - start, Math.min(b, pos) - start])
+				.filter(([a, b]) => a < b);
+			if (!cuts.length) {
+				continue;
+			}
+			const fragment = document.createDocumentFragment();
+			let i = 0;
+			for (const [a, b] of cuts) {
+				fragment.append(chars.slice(i, a).join(''));
+				const mark = document.createElement('b');
+				mark.textContent = chars.slice(a, b).join('');
+				fragment.append(mark);
+				i = b;
+			}
+			fragment.append(chars.slice(i).join(''));
+			node.replaceWith(fragment);
+		}
+		return template.innerHTML;
+	}
+
+	function renderItem(item) {
+		if (item.k === 'f') {
+			const slash = item.d.lastIndexOf('/');
+			const name = item.d.slice(slash + 1);
+			const dir = slash >= 0 ? item.d.slice(0, slash + 1) : '';
+			return `<span class="file">${escape(name)}</span><span class="dir">${escape(dir)}</span><span class="hits">${item.n}</span>`;
+		}
+		if (item.k === 'm') {
+			const key = `${item.p}:${item.l}`;
+			let code = markedRows.get(key);
+			if (code === undefined && rowHtml.has(key)) {
+				code = markHtml(rowHtml.get(key), item.r);
+				markedRows.set(key, code);
+			}
+			code ??= markRanges(item.x, item.r);
+			return `<span class="number">${item.l}</span><span class="code">${code}</span>`;
+		}
+		return markChars(item.d, item.i);
+	}
+
+	function rowClass(item) {
+		return item ? { f: 'file-row', m: item.def ? 'line-row definition' : 'line-row' }[item.k] ?? '' : '';
 	}
 
 	function itemAt(index) {
@@ -105,14 +161,14 @@
 	}
 
 	function render() {
-		count.textContent = `${matched}/${total}`;
+		count.textContent = kind === 'search' ? `${total} files · ${searchLines} lines` : `${matched}/${total}`;
 		count.classList.toggle('running', running);
 		renderMessage();
 		let html = '';
 		for (let i = 0; i < rows && offset + i < matched; i++) {
 			const index = offset + i;
 			const item = itemAt(index);
-			html += `<li class="${index === selected ? 'selected' : ''}">${item ? renderItem(item) : ''}</li>`;
+			html += `<li class="${rowClass(item)}${index === selected ? ' selected' : ''}">${item ? renderItem(item) : ''}</li>`;
 		}
 		list.innerHTML = html;
 		schedulePreview();
@@ -151,10 +207,11 @@
 		if (!previewVisible()) {
 			return;
 		}
-		const key = `${item.p}:${item.l ?? ''}`;
+		const line = item.l ?? undefined;
+		const key = `${item.p}:${line ?? ''}`;
 		// The title is cut from the left so the file name stays visible (direction: rtl); the
 		// left-to-right marks keep slashes and the colon where they belong.
-		previewTitle.textContent = `\u200e${item.l === undefined ? item.d : `${item.d}:${item.l}`}\u200e`;
+		previewTitle.textContent = `\u200e${line === undefined ? item.d : `${item.d}:${line}`}\u200e`;
 		if (key === previewKey) {
 			return;
 		}
@@ -164,7 +221,7 @@
 			showPreview(cached);
 			return;
 		}
-		previewTimer = setTimeout(() => vscode.postMessage({ type: 'preview', path: item.p, line: item.l }), PREVIEW_DELAY);
+		previewTimer = setTimeout(() => vscode.postMessage({ type: 'preview', path: item.p, line }), PREVIEW_DELAY);
 	}
 
 	function showPreview(msg) {
@@ -245,6 +302,9 @@
 				matched = total = 0;
 				error = null;
 				previews.clear();
+				rowHtml.clear();
+				markedRows.clear();
+				searchLines = 0;
 				previewKey = null;
 				requestView(true);
 				render();
@@ -257,12 +317,20 @@
 				error = msg.error;
 				items = msg.items;
 				itemsOffset = msg.offset;
+				searchLines = msg.lines ?? 0;
 				if (selected >= matched) {
 					selected = Math.max(0, matched - 1);
 				}
 				requestView(false);
 				render();
 				break;
+			case 'hlrows': {
+				for (const { key, html } of msg.rows) {
+					rowHtml.set(key, html);
+				}
+				render();
+				break;
+			}
 			case 'preview': {
 				const key = `${msg.path}:${msg.line ?? ''}`;
 				previews.set(key, msg);

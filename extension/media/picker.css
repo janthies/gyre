@@ -149,11 +149,62 @@ body.no-preview #preview {
 	text-decoration: underline;
 }
 
-#list .location {
+#list li.file-row,
+#list li.line-row {
+	display: flex;
+	gap: 1ch;
+}
+
+#list .file {
+	flex: none;
+	font-weight: bold;
+}
+
+#list .dir {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	color: var(--muted);
 }
 
-#list li.selected .location {
+#list .hits {
+	flex: none;
+	margin-left: auto;
+	color: var(--muted);
+}
+
+#list li.line-row {
+	padding-left: 2ch;
+}
+
+#list .number {
+	flex: none;
+	width: 5ch;
+	text-align: right;
+	color: var(--line-number);
+}
+
+#list li.definition .number {
+	color: var(--match);
+	font-weight: bold;
+}
+
+#list .code {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* matches keep their syntax color and get the editor's find-match background */
+#list .code b {
+	color: inherit;
+	background: var(--vscode-editor-findMatchHighlightBackground, rgba(250, 189, 47, 0.4));
+	border-radius: 2px;
+}
+
+#list li.selected .dir,
+#list li.selected .hits,
+#list li.selected .number {
 	color: inherit;
 	opacity: 0.8;
 }

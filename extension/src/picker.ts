@@ -1,11 +1,10 @@
-// The picker: opens the view (modal overlay or tab), relays results from the core to the view,
-// prepares previews and opens the chosen file.
+// The picker: opens the view (modal overlay or tab), relays results and highlighting from the core
+// to the view, prepares previews and opens the chosen file.
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Core, CoreItem, Snapshot } from './core';
-import { highlightLines, languageOf, plainLines } from './highlight';
+import { Core, CoreMessage, Row } from './core';
 
 export const VIEW_TYPE = 'helixPicker.view';
 /** Workbench-internal id of the modal editor group; the public ViewColumn cannot address it. */
@@ -31,7 +30,7 @@ type ViewMessage =
 	| { type: 'view'; offset: number; count: number }
 	| { type: 'selected'; index: number }
 	| { type: 'preview'; path: string; line?: number }
-	| { type: 'open'; item: CoreItem; split: Split }
+	| { type: 'open'; item: Row; split: Split }
 	| { type: 'close' };
 
 export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Disposable {
@@ -40,6 +39,12 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	private state: PickerState | undefined;
 	private roots: string[] = [];
 	private returnColumn: vscode.ViewColumn | undefined;
+	/** What the user was working on when the picker opened, for ranking search results. */
+	private activeFile: string | undefined;
+	private openFiles: string[] = [];
+	/** Preview highlighting requested from the core, by request id; only the latest counts. */
+	private previewRequest: { id: number; path: string; line?: number; start: number } | undefined;
+	private previewId = 0;
 	private readonly pickerFile: vscode.Uri;
 
 	constructor(private readonly context: vscode.ExtensionContext, private readonly core: Core, private readonly log: vscode.OutputChannel) {
@@ -49,7 +54,7 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		if (!fs.existsSync(this.pickerFile.fsPath)) {
 			fs.writeFileSync(this.pickerFile.fsPath, '');
 		}
-		core.onSnapshot(snapshot => this.onSnapshot(snapshot));
+		core.onMessage(message => this.onCoreMessage(message));
 	}
 
 	async open(kind: Kind, resume?: PickerState): Promise<void> {
@@ -61,6 +66,8 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		}
 		this.returnColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
 		this.roots = searchRoots();
+		this.activeFile = tabPath(vscode.window.tabGroups.activeTabGroup.activeTab);
+		this.openFiles = vscode.window.tabGroups.all.flatMap(group => group.tabs.map(tabPath)).filter((p): p is string => !!p);
 		this.pending = state;
 		const presentation = vscode.workspace.getConfiguration('helixPicker').get<string>('presentation', 'modal');
 		if (presentation === 'modal') {
@@ -112,7 +119,11 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		const scope = this.roots.map(root => root.startsWith(os.homedir()) ? '~' + root.slice(os.homedir().length) : root);
 		this.log.appendLine(`${state.kind} in ${this.roots.join(', ')}`);
 		this.post({ type: 'init', kind: state.kind, query: state.query, selected: state.selected, fontSize, scope });
-		this.core.send({ op: state.kind, roots: this.roots });
+		if (state.kind === 'search') {
+			this.core.send({ op: 'search', roots: this.roots, active: this.activeFile, open: this.openFiles, theme: helixTheme() });
+		} else {
+			this.core.send({ op: 'files', roots: this.roots });
+		}
 		if (state.query) {
 			this.core.send({ op: 'query', text: state.query });
 		}
@@ -153,14 +164,28 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		}
 	}
 
-	private onSnapshot(snapshot: Snapshot): void {
-		if (snapshot.kind === this.state?.kind) {
-			this.post({ ...snapshot, type: 'snap' });
+	private onCoreMessage(message: CoreMessage): void {
+		switch (message.t) {
+			case 'snap':
+				if (message.kind === this.state?.kind) {
+					this.post({ ...message, type: 'snap' });
+				}
+				break;
+			case 'hlrows':
+				this.post({ type: 'hlrows', rows: message.rows });
+				break;
+			case 'hl': {
+				const request = this.previewRequest;
+				if (request?.id === message.id && message.lines) {
+					this.post({ type: 'preview', path: request.path, line: request.line, start: request.start + 1, lines: message.lines });
+				}
+				break;
+			}
 		}
 	}
 
-	/** Sends the preview twice: plain text right away, then highlighted once Shiki is done. */
-	private async preview(file: string, line?: number): Promise<void> {
+	/** Sends the plain preview right away and asks the core to highlight it like Helix. */
+	private preview(file: string, line?: number): void {
 		const lines = readLines(file);
 		if (!lines) {
 			this.post({ type: 'preview', path: file, line, binary: true });
@@ -168,19 +193,12 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		}
 		const start = line ? Math.max(0, line - 1 - PREVIEW_BEFORE) : 0;
 		const end = Math.min(lines.length, line ? line - 1 + PREVIEW_AFTER : PREVIEW_FILE_LINES);
-		const slice = lines.slice(start, end);
-		this.post({ type: 'preview', path: file, line, start: start + 1, lines: plainLines(slice) });
-		try {
-			const lang = await languageOf(file);
-			if (lang) {
-				this.post({ type: 'preview', path: file, line, start: start + 1, lines: await highlightLines(slice, lang) });
-			}
-		} catch (err) {
-			this.log.appendLine(`highlighting ${file} failed: ${err}`);
-		}
+		this.post({ type: 'preview', path: file, line, start: start + 1, lines: lines.slice(start, end).map(escape) });
+		this.previewRequest = { id: ++this.previewId, path: file, line, start };
+		this.core.send({ op: 'highlight', id: this.previewId, path: file, first: start, last: end, theme: helixTheme() });
 	}
 
-	private async openItem(item: CoreItem, split: Split): Promise<void> {
+	private async openItem(item: Row, split: Split): Promise<void> {
 		const uri = vscode.Uri.file(item.p);
 		this.panel?.dispose();
 		if (split === 'vertical') {
@@ -189,13 +207,14 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 			await vscode.commands.executeCommand('workbench.action.newGroupBelow');
 		}
 		const viewColumn = split === 'none' ? this.returnColumn ?? vscode.ViewColumn.Active : vscode.ViewColumn.Active;
-		if (item.l === undefined) {
+		const line = item.k === undefined ? null : item.l;
+		if (line === null) {
 			await vscode.commands.executeCommand('vscode.open', uri, { viewColumn, preview: false });
 			return;
 		}
 		const document = await vscode.workspace.openTextDocument(uri);
-		const lineIndex = Math.min(item.l - 1, document.lineCount - 1);
-		const match = item.x && item.r?.length ? item.x.slice(item.r[0][0], item.r[0][1]) : '';
+		const lineIndex = Math.min(line - 1, document.lineCount - 1);
+		const match = item.k === 'm' && item.r.length ? item.x.slice(item.r[0][0], item.r[0][1]) : '';
 		const column = match ? Math.max(0, document.lineAt(lineIndex).text.indexOf(match)) : 0;
 		const selection = new vscode.Range(lineIndex, column, lineIndex, column + match.length);
 		await vscode.window.showTextDocument(document, { viewColumn, preview: false, selection });
@@ -218,6 +237,26 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	}
 }
 
+/**
+ * The Helix theme for highlighting, as a fallback list for the core: the configured theme, or the
+ * Helix theme with the VS Code theme's name (Gruvbox Light Hard -> gruvbox_light_hard), then a
+ * light or dark default.
+ */
+function helixTheme(): string {
+	const configured = vscode.workspace.getConfiguration('helixPicker').get<string>('previewTheme', 'auto');
+	const vscodeTheme = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme', '');
+	const kind = vscode.window.activeColorTheme.kind;
+	const dark = kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast;
+	const preferred = configured !== 'auto' ? configured : vscodeTheme.toLowerCase().replace(/[\s-]+/g, '_');
+	return `${preferred},${dark ? 'github_dark' : 'github_light'}`;
+}
+
+function tabPath(tab: vscode.Tab | undefined): string | undefined {
+	const input = tab?.input;
+	const uri = input instanceof vscode.TabInputText || input instanceof vscode.TabInputCustom ? input.uri : undefined;
+	return uri?.scheme === 'file' ? uri.fsPath : undefined;
+}
+
 /** Workspace folders; without a workspace the folder of the active file, else the home folder. */
 function searchRoots(): string[] {
 	const folders = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file').map(f => f.uri.fsPath);
@@ -226,6 +265,10 @@ function searchRoots(): string[] {
 	}
 	const active = vscode.window.activeTextEditor?.document.uri;
 	return [active?.scheme === 'file' ? path.dirname(active.fsPath) : os.homedir()];
+}
+
+function escape(text: string): string {
+	return text.replace(/[&<>]/g, c => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
 }
 
 /** The file's lines, or undefined for binary or unreadable files. */
