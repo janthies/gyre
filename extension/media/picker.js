@@ -193,11 +193,13 @@
 		document.body.classList.toggle('no-preview', !previewVisible());
 	}
 
+	// Results stream in as new snapshots every few milliseconds; the pending request is only
+	// cancelled when the selection really moves to another file or line, else it would never fire.
 	function schedulePreview() {
-		clearTimeout(previewTimer);
 		const item = itemAt(selected);
 		if (!item) {
 			if (matched === 0) {
+				clearTimeout(previewTimer);
 				previewKey = null;
 				previewTitle.textContent = '';
 				previewBody.innerHTML = '';
@@ -215,6 +217,7 @@
 		if (key === previewKey) {
 			return;
 		}
+		clearTimeout(previewTimer);
 		previewKey = key;
 		const cached = previews.get(key);
 		if (cached) {
