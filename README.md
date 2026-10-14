@@ -16,7 +16,7 @@ Needs `cargo`, `npm` and the `code` command. The script builds the Rust core, co
 | Helix Picker: Global search | regex search across the workspace (smart case) |
 | Helix Picker: Resume last picker | the last picker again, with its query and selection |
 
-Without a workspace folder, both search the folder of the active file. Like Helix, hidden files are skipped and `.gitignore`/`.ignore` files are honored.
+Without a workspace folder, both search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
 
 Keys inside the picker follow Helix:
 

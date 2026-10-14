@@ -302,13 +302,14 @@ fn emit(value: &Value) {
     let _ = out.flush();
 }
 
-/// Walks the roots like Helix's file picker: hidden files skipped, .gitignore and .ignore honored.
+/// Walks the roots like Helix's file picker: hidden files skipped, .gitignore and .ignore honored,
+/// symbolic links followed (ignore detects link loops).
 fn walker(roots: &[PathBuf]) -> WalkBuilder {
     let mut builder = WalkBuilder::new(&roots[0]);
     for root in &roots[1..] {
         builder.add(root);
     }
-    builder.hidden(true).require_git(false).follow_links(false);
+    builder.hidden(true).require_git(false).follow_links(true);
     builder
 }
 
