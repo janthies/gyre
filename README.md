@@ -1,43 +1,35 @@
-# helix-picker
+# Gyre
 
-A Helix-style picker for VS Code: fuzzy file picker, ranked workspace search and symbol picker, with a preview highlighted like Helix, in a centered overlay above the editor. Not on the Marketplace; the extension is a download on the Releases page.
+VS Code finds files by name with Quick Open and text with the search panel. These are two separate tools, and the search panel lists the matching lines in whatever order it happened to walk the files. Anyone coming from Helix or from Neovim's Telescope misses the picker those editors have: one window that finds files, text and symbols, ranks what it finds, and shows the code around the selected result in a highlighted preview. Gyre is that picker for VS Code. It opens as an overlay in the middle of the editor, and its core is a small Rust program built on the same libraries as Helix's pickers.
 
-## Install
+## Installing
 
-Download `helix-picker.vsix` from the latest release and run
+Gyre is not on the Marketplace. Instead, every release on this page carries a single file, `gyre.vsix`, which contains the extension together with the Rust core compiled for Linux on x86-64. To install it, you download that file from the latest release and hand it to VS Code:
 
-    code --install-extension helix-picker.vsix
+```
+code --install-extension gyre.vsix
+```
 
-then "Developer: Reload Window" in open VS Code windows. The package contains the Rust core for Linux x86-64; it needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). The preview is highlighted with the grammars and themes of an installed Helix (snap, package or `~/.config/helix/runtime`); without Helix it shows plain text.
+Windows that were already open pick up the new extension only after "Developer: Reload Window" from the command palette; new windows have it at once. An update works the same way: installing a newer `gyre.vsix` replaces the old version.
 
-To build it yourself instead, run `./install.sh`. It needs `cargo`, `npm` and the `code` command, builds the Rust core, compiles the extension, packages both into `helix-picker.vsix` and installs it.
+The core is an ordinary Linux program linked against the GNU C library, and it needs glibc 2.35 or newer. In practice this means Ubuntu 22.04, Debian 12, Fedora 36 or any later release. The release does not cover macOS, Windows or ARM machines; on those, Gyre would have to be built from source, which so far has only been tried on Linux.
 
-## Use
+One part of Gyre depends on what else is installed. The preview is highlighted with tree-sitter, and rather than shipping its own grammars, Gyre borrows the grammars, queries and color themes of an installed Helix. It looks for them in `$HELIX_RUNTIME`, in `~/.config/helix/runtime` and in the usual install locations, including the snap. If Helix is not installed, the picker still works, but the preview shows plain text.
+
+## Using it
+
+Gyre adds four commands, each with a default key:
 
 | Command | Key | Opens |
 |---|---|---|
-| Helix Picker: Files | Ctrl-Alt-a | fuzzy file picker over the workspace folders |
-| Helix Picker: Global search | Ctrl-Alt-e | keyword search across the workspace, ranked by relevance |
-| Helix Picker: Symbols | Ctrl-Alt-s | symbols from the language servers: the active file's while the query is empty, the workspace's matching the query |
-| Helix Picker: Resume last picker | Ctrl-Alt-q | the last picker again, with its query and selection |
+| Gyre: Files | Ctrl-Alt-a | a fuzzy file picker over the workspace folders |
+| Gyre: Global search | Ctrl-Alt-e | a keyword search across the workspace, ranked by relevance |
+| Gyre: Symbols | Ctrl-Alt-s | the symbols of the language servers: the active file's while the query is empty, the workspace's matching the query |
+| Gyre: Resume last picker | Ctrl-Alt-q | the last picker again, with its query and selection |
 
-To change the keys, open "Preferences: Open Keyboard Shortcuts" and search for `helixPicker`.
+These keys are ordinary VS Code keybindings. To change one, open "Preferences: Open Keyboard Shortcuts", search for `Gyre` and record a new key, as for any other command.
 
-The overlay shows the three modes on top (Files, Text, Symbols); click one, press Alt-Left/Alt-Right or Alt-1, Alt-2, Alt-3 to switch, the query stays. Without a workspace folder, files and text search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
-
-### Search
-
-The query is a list of keywords; a file matches if every keyword occurs in its content or path. A keyword is matched literally and ignores case unless it contains an uppercase letter. `"a phrase"` matches the words together, `/regex/` is a regular expression. Results are grouped by file: a header with the file's name, folder and number of matching lines, then up to ten of its best lines.
-
-Files are ranked the way Sourcegraph ranks keyword search (BM25F): repeated matches count less and less, matches in short files and rare keywords count more, and matches in the path or on a definition (`fn`, `#define`, a function head, a Markdown heading, ...) count five times. A file that defines a searched name ranks twice as high. Whole words count more than parts of words, matches in comments count half. Backups, `.patch`/`.diff` files, generated, vendored and test code rank lower; files open in VS Code and files next to the one you are working on rank higher. Within a file, lines with more of the keywords come first, then definitions.
-
-### Symbols
-
-Symbols come from the language servers through VS Code (clangd, rust-analyzer, ...), like Helix's symbol pickers: with an empty query the active file's symbols in file order (Helix's `Space s`), otherwise the workspace's symbols matching the query (`Space S`). The language server filters and orders them; exact and prefix name matches, functions and types, and files next to the active one move up, backups, tests and build output down. clangd loads its compile database and index only once a C file is open and finds nothing before that; if no C file is open, the picker opens the first file of the compile database in the background and asks again for a few seconds. Paths in linked folders are shown below the link (`RIOT/...`), not under their real location.
-
-### Keys
-
-Keys inside the picker follow Helix:
+Once the picker is open, the three modes appear at its top, and Alt-Left and Alt-Right switch between them while the query stays. Without a workspace folder, the file and text modes search the folder of the active file. As in Helix, hidden files are skipped, `.gitignore` and `.ignore` files are honored, and symbolic links are followed. The keys inside the picker follow Helix as well:
 
 | Key | Action |
 |---|---|
@@ -52,29 +44,45 @@ Keys inside the picker follow Helix:
 | Alt-1, Alt-2, Alt-3 | switch to files, text, symbols |
 | Esc, Ctrl-c | close |
 
+The overlay is VS Code's modal editor, the same one Settings opens in. By default it covers 80% of the window, up to 1400×900 pixels. Its edges can be dragged, and its maximize button enlarges it; VS Code remembers the size for all modal editors.
+
+### How the search ranks
+
+A query is a list of keywords, and a file matches when every keyword occurs somewhere in its content or its path. Each keyword is matched literally and ignores case unless it contains an uppercase letter, as with smart case in Helix. Two forms go beyond plain keywords: `"a phrase"` matches the words next to each other, and `/regex/` is a regular expression. The results are grouped by file. Each group starts with a header that gives the file's name, its folder and the number of matching lines, and then shows up to ten of the file's best lines.
+
+Gyre orders the files with BM25F, the scoring scheme Sourcegraph uses for its keyword search. Under BM25F a repeated match counts a little less with each repetition, while a match in a short file or on a rare keyword counts more. On top of that, some matches weigh more than others. A match in the path or on a definition, such as a `fn` line, a `#define`, a function head or a Markdown heading, counts five times, and a file that defines one of the searched names ranks twice as high. Whole words count more than parts of words, and matches in comments count half. Backups, `.patch` and `.diff` files, and generated, vendored or test code move down, whereas files that are open in VS Code and files next to the one you are working on move up. Within a file, the lines with the most keywords come first, followed by definitions.
+
+### Where the symbols come from
+
+Gyre does not parse symbols itself. Like Helix's symbol pickers, it asks the language servers, here through VS Code (clangd, rust-analyzer and the like). While the query is empty, the picker lists the active file's symbols in file order, as Helix's `Space s` does; as soon as you type, it lists the workspace's symbols that match the query, as `Space S` does. The language server filters and orders these results, and Gyre then moves exact and prefix matches, functions and types, and files near the active one up, and backups, tests and build output down.
+
+clangd needs special care, because it loads its compile database and its index only after a C file has been opened and finds nothing until then. If no C file is open, Gyre opens the first file of the compile database in the background and repeats the query for a few seconds. Results inside a folder that is reached through a symbolic link are shown below the link rather than under the folder it points to.
+
 ## Settings
 
-- `helixPicker.presentation`: `modal` (default) opens the centered overlay, `tab` opens a tab in the active editor group. The first button in the overlay's header also moves an open picker into a tab.
-- `helixPicker.fontSize`: font size of the picker in pixels (default 12).
-- `helixPicker.previewTheme`: Helix theme for highlighting. `auto` uses the Helix theme named like the VS Code color theme (Gruvbox Light Hard becomes `gruvbox_light_hard`), otherwise Helix's GitHub light or dark theme.
-- `helixPicker.saturation`: factor on the highlight colors' saturation (default 1.4). Theme colors that are already as saturated as the screen allows get a little lighter to make room.
-- `helixPicker.boldKeywords`: keywords (`if`, `return`, `struct`, `#include`, `fn`, ...) in bold (default on).
-- `helixPicker.helixRuntime`: Helix runtime directory. Empty searches `$HELIX_RUNTIME`, `~/.config/helix/runtime` and the usual install locations, including the snap.
+All settings live under `helixPicker` in the VS Code settings. The name predates the project's name and was kept so that existing configurations still work.
 
-The overlay is VS Code's modal editor (the one Settings opens in). By default it takes 80% of the window, capped at 1400×900 pixels; drag its edges or use its maximize button, and VS Code remembers the size for all modal editors.
+| Setting | Default | Effect |
+|---|---|---|
+| `helixPicker.presentation` | `modal` | `modal` opens the centered overlay, `tab` a tab in the active editor group |
+| `helixPicker.fontSize` | `12` | font size of the picker in pixels |
+| `helixPicker.previewTheme` | `auto` | Helix theme for the highlighting; `auto` takes the Helix theme named like the VS Code color theme (Gruvbox Light Hard becomes `gruvbox_light_hard`), otherwise Helix's GitHub light or dark theme |
+| `helixPicker.saturation` | `1.4` | factor on the saturation of the highlight colors; colors that are already as saturated as the screen allows become a little lighter instead |
+| `helixPicker.boldKeywords` | on | shows keywords such as `if`, `return`, `struct`, `#include` and `fn` in bold |
+| `helixPicker.helixRuntime` | empty | the Helix runtime directory, for a Helix installed somewhere Gyre does not look |
 
 ## How it works
 
-- `core/` is a Rust program built on the libraries Helix uses for its pickers: nucleo for fuzzy matching, and ignore and grep-searcher from ripgrep for walking and searching the workspace. It runs once per VS Code window and talks JSON lines over stdin/stdout. It only ever sends the slice of results the picker shows.
-- Highlighting also happens in the core, with tree-sitter and the grammars, queries and themes of the installed Helix, so the preview and the result lines look exactly like Helix. Without a Helix installation the picker works, unhighlighted.
-- `extension/` is the VS Code side in TypeScript. The picker view is a webview.
-- The overlay is opened through VS Code's internal `_workbench.openWith` command with the modal editor group id, because the public API cannot address that group. If that ever stops working, the picker falls back to a tab.
+Gyre has two halves that talk to each other through JSON lines on a pipe. The Rust program in `core/` runs once per VS Code window and does the heavy work. It matches file names with nucleo, the fuzzy matcher of Helix, and walks and searches the workspace with `ignore` and `grep-searcher` from ripgrep. Because it sends only the slice of results the picker currently shows, the amount of data crossing the pipe stays small however many files match. The core also highlights the preview, with tree-sitter and the Helix runtime described above, so that the preview and the result lines look as they do in Helix.
 
-## Plan
+The TypeScript extension in `extension/` is the VS Code side. It starts the core, asks the language servers for symbols, and shows the picker as a webview. VS Code's public API cannot place a webview in the modal overlay, so the extension opens it through the internal command `_workbench.openWith`. If a later VS Code release changes that command, the picker falls back to an ordinary tab.
 
-| Step | Content | Status |
-|---|---|---|
-| 0 | Spike: modal overlay vs. tab, opening speed | done (removed; see git history) |
-| 1 | Rust core, file picker and global search with highlighted preview, Helix picker keys, install script | done |
-| 2 | Buffer, symbol and diagnostics pickers, Space leader, key hint panel, Helix keymap | |
-| 3 | Window mode in the style of Helix's `Ctrl-w` | |
+## Building from source
+
+The script `install.sh` builds the core with `cargo`, compiles the extension with `npm`, packages both into `gyre.vsix` and installs that file with the `code` command:
+
+```
+./install.sh
+```
+
+All three tools have to be on the `PATH`. Packaging uses `vsce`, which needs a newer Node.js than many distributions ship, so the script runs it on the Node.js that comes inside VS Code.

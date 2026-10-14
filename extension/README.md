@@ -1,3 +1,3 @@
-# Helix Picker
+# Gyre
 
-Helix-style fuzzy file picker and workspace search for VS Code. Built and installed from the repository with `install.sh`; see the README there.
+A Helix-style picker for files, text and symbols in VS Code, with a highlighted preview. Installation and use are described at https://github.com/janthies/gyre.

@@ -4,7 +4,7 @@ import { Core } from './core';
 import { Picker, VIEW_TYPE } from './picker';
 
 export function activate(context: vscode.ExtensionContext): void {
-	const log = vscode.window.createOutputChannel('Helix Picker');
+	const log = vscode.window.createOutputChannel('Gyre');
 	const core = new Core(path.join(context.extensionPath, 'bin', 'hxp-core'), log);
 	const picker = new Picker(context, core, log);
 	context.subscriptions.push(

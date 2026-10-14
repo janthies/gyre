@@ -1,11 +1,15 @@
 {
 	"name": "helix-picker",
-	"displayName": "Helix Picker",
-	"description": "Helix-style fuzzy file picker and workspace search with preview",
+	"displayName": "Gyre",
+	"description": "Helix-style picker for files, text and symbols, with a highlighted preview",
 	"publisher": "jan",
 	"version": "0.1.0",
 	"private": true,
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/janthies/gyre"
+	},
 	"engines": {
 		"vscode": "^1.100.0"
 	},
@@ -22,26 +26,26 @@
 			{
 				"command": "helixPicker.files",
 				"title": "Files",
-				"category": "Helix Picker"
+				"category": "Gyre"
 			},
 			{
 				"command": "helixPicker.search",
 				"title": "Global search",
-				"category": "Helix Picker"
+				"category": "Gyre"
 			},
 			{
 				"command": "helixPicker.symbols",
 				"title": "Symbols",
-				"category": "Helix Picker"
+				"category": "Gyre"
 			},
 			{
 				"command": "helixPicker.resume",
 				"title": "Resume last picker",
-				"category": "Helix Picker"
+				"category": "Gyre"
 			}
 		],
 		"configuration": {
-			"title": "Helix Picker",
+			"title": "Gyre",
 			"properties": {
 				"helixPicker.presentation": {
 					"type": "string",
@@ -90,7 +94,7 @@
 		"customEditors": [
 			{
 				"viewType": "helixPicker.view",
-				"displayName": "Helix Picker",
+				"displayName": "Gyre",
 				"selector": [
 					{
 						"filenamePattern": "*.helixpicker"
