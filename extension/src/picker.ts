@@ -109,7 +109,9 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	private start(state: PickerState): void {
 		this.state = { ...state };
 		const fontSize = vscode.workspace.getConfiguration('helixPicker').get<number>('fontSize', 12);
-		this.post({ type: 'init', kind: state.kind, query: state.query, selected: state.selected, fontSize });
+		const scope = this.roots.map(root => root.startsWith(os.homedir()) ? '~' + root.slice(os.homedir().length) : root);
+		this.log.appendLine(`${state.kind} in ${this.roots.join(', ')}`);
+		this.post({ type: 'init', kind: state.kind, query: state.query, selected: state.selected, fontSize, scope });
 		this.core.send({ op: state.kind, roots: this.roots });
 		if (state.query) {
 			this.core.send({ op: 'query', text: state.query });

@@ -8,6 +8,8 @@
 	const list = document.getElementById('list');
 	const previewTitle = document.getElementById('preview-title');
 	const previewBody = document.getElementById('preview-body');
+	const mode = document.getElementById('mode');
+	const folders = document.getElementById('folders');
 
 	/** Pause before asking for a preview, so scrolling fast doesn't request every file. */
 	const PREVIEW_DELAY = 40;
@@ -235,6 +237,8 @@
 				kind = msg.kind;
 				query.value = msg.query;
 				query.placeholder = kind === 'files' ? 'Find file' : 'Search (regex)';
+				mode.textContent = kind === 'files' ? 'Files in' : 'Global search in';
+				folders.textContent = msg.scope.join(', ');
 				selected = msg.selected;
 				offset = 0;
 				items = [];

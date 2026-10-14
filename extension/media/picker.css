@@ -83,6 +83,9 @@ body.no-preview #preview {
 	background: transparent;
 	color: var(--fg);
 	font: inherit;
+	/* explicit height: with the default line height Chromium clips the underscore */
+	line-height: 1.6;
+	padding: 1px 0;
 }
 
 #query::placeholder {
@@ -198,6 +201,18 @@ body.no-preview #preview {
 #preview-body .placeholder {
 	padding: 0 12px;
 	color: var(--muted);
+}
+
+#scope {
+	color: var(--muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#folders {
+	color: var(--fg);
+	font-weight: bold;
 }
 
 #keys {
