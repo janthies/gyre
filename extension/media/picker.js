@@ -324,8 +324,8 @@
 		e.stopPropagation();
 		const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
 		const page = Math.max(1, fitsFrom(offset) - 1);
-		if (e.key === 'ArrowDown' || (ctrl && e.key === 'n') || (e.key === 'Tab' && !e.shiftKey)) select(selected + 1);
-		else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p') || (e.key === 'Tab' && e.shiftKey)) select(selected - 1);
+		if (e.key === 'ArrowDown' || (ctrl && (e.key === 'n' || e.key === 'j')) || (e.key === 'Tab' && !e.shiftKey)) select(selected + 1);
+		else if (e.key === 'ArrowUp' || (ctrl && (e.key === 'p' || e.key === 'k')) || (e.key === 'Tab' && e.shiftKey)) select(selected - 1);
 		else if (e.key === 'PageDown' || (ctrl && e.key === 'd')) select(selected + page);
 		else if (e.key === 'PageUp' || (ctrl && e.key === 'u')) select(selected - page);
 		else if (e.key === 'Home') select(0);

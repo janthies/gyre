@@ -35,7 +35,7 @@ Keys inside the picker follow Helix:
 
 | Key | Action |
 |---|---|
-| Up, Down, Ctrl-p, Ctrl-n, Shift-Tab, Tab | previous / next result |
+| Up, Down, Ctrl-p, Ctrl-n, Ctrl-k, Ctrl-j, Shift-Tab, Tab | previous / next result |
 | PageUp, PageDown, Ctrl-u, Ctrl-d | page up / down |
 | Home, End | first / last result |
 | Enter | open in the editor group the picker was opened from |
