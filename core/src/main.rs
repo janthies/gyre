@@ -181,6 +181,11 @@ fn main() {
         return;
     }
 
+    // Without a Helix runtime the preview cannot be highlighted; the extension tells the user once.
+    if dirs.is_empty() {
+        emit(&json!({ "t": "runtime", "found": false }));
+    }
+
     let (tx, rx) = mpsc::channel();
     let reader_tx = tx.clone();
     thread::spawn(move || {

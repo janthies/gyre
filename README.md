@@ -13,6 +13,9 @@ code --install-extension gyre.vsix
 
 Then run "Developer: Reload Window" and press Ctrl-Alt-a for files, Ctrl-Alt-e for text or Ctrl-Alt-s for symbols. The release runs on Linux x86-64 with glibc 2.35 or newer.
 
+> [!IMPORTANT]
+> Syntax highlighting in the preview needs [Helix](https://helix-editor.com) to be installed, for example with `sudo snap install helix --classic`. Gyre borrows Helix's grammars and color themes; without Helix the picker works, but the preview is plain text.
+
 ---
 
 Everything below is for people who want to know more.

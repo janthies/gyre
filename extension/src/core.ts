@@ -92,6 +92,8 @@ export type CoreRequest =
 export class Core implements vscode.Disposable {
 	private proc: cp.ChildProcess | undefined;
 	private listener: ((message: CoreMessage) => void) | undefined;
+	/** Called when the core finds no Helix runtime, at most once per start of the core. */
+	onMissingRuntime: (() => void) | undefined;
 
 	constructor(private readonly binary: string, private readonly log: vscode.OutputChannel) {}
 
@@ -119,6 +121,8 @@ export class Core implements vscode.Disposable {
 			}
 			if (message.t === 'snap' || message.t === 'hl' || message.t === 'hlrows') {
 				this.listener?.(message as CoreMessage);
+			} else if (message.t === 'runtime') {
+				this.onMissingRuntime?.();
 			} else {
 				this.log.appendLine(`core: ${line}`);
 			}

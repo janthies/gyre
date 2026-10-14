@@ -16,6 +16,14 @@
 	"main": "./out/extension.js",
 	"activationEvents": [],
 	"contributes": {
+		"configurationDefaults": {
+			"terminal.integrated.commandsToSkipShell": [
+				"helixPicker.files",
+				"helixPicker.search",
+				"helixPicker.symbols",
+				"helixPicker.resume"
+			]
+		},
 		"keybindings": [
 			{ "key": "ctrl+alt+a", "command": "helixPicker.files" },
 			{ "key": "ctrl+alt+e", "command": "helixPicker.search" },
