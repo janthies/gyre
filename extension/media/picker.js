@@ -126,20 +126,50 @@
 		return items[index - itemsOffset];
 	}
 
-	function visibleRows() {
-		const rowHeight = parseFloat(getComputedStyle(document.body).fontSize) * 1.6;
-		return Math.max(1, Math.floor((list.clientHeight - 8) / rowHeight));
+	/** Row heights in em, as in picker.css: search result lines are lower than file rows. */
+	const FILE_ROW = 1.6;
+	const LINE_ROW = 1.25;
+
+	function rowHeight(item) {
+		return parseFloat(getComputedStyle(document.body).fontSize) * (item && item.k === 'm' ? LINE_ROW : FILE_ROW);
+	}
+
+	function listHeight() {
+		return list.clientHeight - 8;
+	}
+
+	/** Rows that could fit at most (all of them low); the list clips what doesn't fit. */
+	function capacity() {
+		return Math.max(1, Math.ceil(listHeight() / rowHeight({ k: 'm' })));
+	}
+
+	/** Rows that fit from `start` on, judged by the rows known from the last snapshot. */
+	function fitsFrom(start) {
+		let height = 0;
+		let count = 0;
+		while (start + count < matched && height + rowHeight(itemAt(start + count)) <= listHeight()) {
+			height += rowHeight(itemAt(start + count));
+			count++;
+		}
+		return Math.max(1, count);
 	}
 
 	/** Scrolls the list so the selection is visible and asks the core for that window. */
 	function requestView(force) {
-		rows = visibleRows();
+		rows = capacity();
 		if (selected < offset) {
 			offset = selected;
-		} else if (selected >= offset + rows) {
-			offset = selected - rows + 1;
+		} else if (selected >= offset + fitsFrom(offset)) {
+			// Rows differ in height: walk back from the selection while the rows still fit.
+			let start = selected;
+			let height = rowHeight(itemAt(selected));
+			while (start > 0 && height + rowHeight(itemAt(start - 1)) <= listHeight()) {
+				start--;
+				height += rowHeight(itemAt(start));
+			}
+			offset = start;
 		}
-		offset = Math.max(0, Math.min(offset, matched - rows));
+		offset = Math.max(0, Math.min(offset, matched - 1));
 		if (force || offset !== requested.offset || rows !== requested.count) {
 			requested = { offset, count: rows };
 			vscode.postMessage({ type: 'view', offset, count: rows });
@@ -268,7 +298,7 @@
 	query.addEventListener('keydown', e => {
 		e.stopPropagation();
 		const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
-		const page = Math.max(1, rows - 1);
+		const page = Math.max(1, fitsFrom(offset) - 1);
 		if (e.key === 'ArrowDown' || (ctrl && e.key === 'n') || (e.key === 'Tab' && !e.shiftKey)) select(selected + 1);
 		else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p') || (e.key === 'Tab' && e.shiftKey)) select(selected - 1);
 		else if (e.key === 'PageDown' || (ctrl && e.key === 'd')) select(selected + page);

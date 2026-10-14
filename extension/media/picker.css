@@ -173,7 +173,10 @@ body.no-preview #preview {
 	color: var(--muted);
 }
 
+/* result lines are lower than file rows, so more of them fit (heights also in picker.js) */
 #list li.line-row {
+	height: 1.25em;
+	line-height: 1.25em;
 	padding-left: 2ch;
 }
 
