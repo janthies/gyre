@@ -12,6 +12,12 @@
 	"main": "./out/extension.js",
 	"activationEvents": [],
 	"contributes": {
+		"keybindings": [
+			{ "key": "ctrl+alt+a", "command": "helixPicker.files" },
+			{ "key": "ctrl+alt+e", "command": "helixPicker.search" },
+			{ "key": "ctrl+alt+s", "command": "helixPicker.symbols" },
+			{ "key": "ctrl+alt+q", "command": "helixPicker.resume" }
+		],
 		"commands": [
 			{
 				"command": "helixPicker.files",

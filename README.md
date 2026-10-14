@@ -1,21 +1,27 @@
 # helix-picker
 
-A Helix-style picker for VS Code: fuzzy file picker, ranked workspace search and symbol picker, with a preview highlighted like Helix, in a centered overlay above the editor. Not published to the Marketplace; built and installed from this repo.
+A Helix-style picker for VS Code: fuzzy file picker, ranked workspace search and symbol picker, with a preview highlighted like Helix, in a centered overlay above the editor. Not on the Marketplace; the extension is a download on the Releases page.
 
 ## Install
 
-    ./install.sh
+Download `helix-picker.vsix` from the latest release and run
 
-Needs `cargo`, `npm` and the `code` command. The script builds the Rust core, compiles the extension, packages both into `helix-picker.vsix` and installs it. Afterwards run "Developer: Reload Window" in open VS Code windows. Run it again after `git pull` to update.
+    code --install-extension helix-picker.vsix
+
+then "Developer: Reload Window" in open VS Code windows. The package contains the Rust core for Linux x86-64; it needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). The preview is highlighted with the grammars and themes of an installed Helix (snap, package or `~/.config/helix/runtime`); without Helix it shows plain text.
+
+To build it yourself instead, run `./install.sh`. It needs `cargo`, `npm` and the `code` command, builds the Rust core, compiles the extension, packages both into `helix-picker.vsix` and installs it.
 
 ## Use
 
-| Command | Opens |
-|---|---|
-| Helix Picker: Files | fuzzy file picker over the workspace folders |
-| Helix Picker: Global search | keyword search across the workspace, ranked by relevance |
-| Helix Picker: Symbols | symbols from the language servers: the active file's while the query is empty, the workspace's matching the query |
-| Helix Picker: Resume last picker | the last picker again, with its query and selection |
+| Command | Key | Opens |
+|---|---|---|
+| Helix Picker: Files | Ctrl-Alt-a | fuzzy file picker over the workspace folders |
+| Helix Picker: Global search | Ctrl-Alt-e | keyword search across the workspace, ranked by relevance |
+| Helix Picker: Symbols | Ctrl-Alt-s | symbols from the language servers: the active file's while the query is empty, the workspace's matching the query |
+| Helix Picker: Resume last picker | Ctrl-Alt-q | the last picker again, with its query and selection |
+
+To change the keys, open "Preferences: Open Keyboard Shortcuts" and search for `helixPicker`.
 
 The overlay shows the three modes on top (Files, Text, Symbols); click one, press Alt-Left/Alt-Right or Alt-1, Alt-2, Alt-3 to switch, the query stays. Without a workspace folder, files and text search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
 
