@@ -1,22 +1,31 @@
 # Gyre
 
-VS Code finds files by name with Quick Open and text with the search panel. These are two separate tools, and the search panel lists the matching lines in whatever order it happened to walk the files. Anyone coming from Helix or from Neovim's Telescope misses the picker those editors have: one window that finds files, text and symbols, ranks what it finds, and shows the code around the selected result in a highlighted preview. Gyre is that picker for VS Code. It opens as an overlay in the middle of the editor, and its core is a small Rust program built on the same libraries as Helix's pickers.
+A Helix-style picker for VS Code: files, text and symbols in one overlay, ranked, with a highlighted preview.
 
-## Installing
+![Gyre switching between files, text and symbols](docs/modes.gif)
 
-Gyre is not on the Marketplace. Instead, every release on this page carries a single file, `gyre.vsix`, which contains the extension together with the Rust core compiled for Linux on x86-64. To install it, you download that file from the latest release and hand it to VS Code:
+## Install
 
 ```
+curl -LO https://github.com/janthies/gyre/releases/latest/download/gyre.vsix
 code --install-extension gyre.vsix
 ```
 
-Windows that were already open pick up the new extension only after "Developer: Reload Window" from the command palette; new windows have it at once. An update works the same way: installing a newer `gyre.vsix` replaces the old version.
+Then run "Developer: Reload Window" and press Ctrl-Alt-a for files, Ctrl-Alt-e for text or Ctrl-Alt-s for symbols. The release runs on Linux x86-64 with glibc 2.35 or newer.
 
-The core is an ordinary Linux program linked against the GNU C library, and it needs glibc 2.35 or newer. In practice this means Ubuntu 22.04, Debian 12, Fedora 36 or any later release. The release does not cover macOS, Windows or ARM machines; on those, Gyre would have to be built from source, which so far has only been tried on Linux.
+---
 
-One part of Gyre depends on what else is installed. The preview is highlighted with tree-sitter, and rather than shipping its own grammars, Gyre borrows the grammars, queries and color themes of an installed Helix. It looks for them in `$HELIX_RUNTIME`, in `~/.config/helix/runtime` and in the usual install locations, including the snap. If Helix is not installed, the picker still works, but the preview shows plain text.
+Everything below is for people who want to know more.
+
+## Why
+
+VS Code finds files by name with Quick Open and text with the search panel. These are two separate tools, and the search panel lists the matching lines in whatever order it happened to walk the files. Helix and Neovim's Telescope have one picker instead, which finds files, text and symbols, ranks what it finds and shows the code around the selected result. Gyre brings that picker to VS Code. Its core is a small Rust program built on the same libraries as Helix's pickers.
+
+The preview is highlighted with tree-sitter, and rather than shipping its own grammars, Gyre borrows the grammars, queries and color themes of an installed Helix. It looks for them in `$HELIX_RUNTIME`, in `~/.config/helix/runtime` and in the usual install locations, including the snap. Without Helix the picker still works, but the preview shows plain text.
 
 ## Using it
+
+![Opening a file with the fuzzy file picker](docs/files.gif)
 
 Gyre adds four commands, each with a default key:
 
@@ -46,13 +55,15 @@ Once the picker is open, the three modes appear at its top, and Alt-Left and Alt
 
 The overlay is VS Code's modal editor, the same one Settings opens in. By default it covers 80% of the window, up to 1400×900 pixels. Its edges can be dragged, and its maximize button enlarges it; VS Code remembers the size for all modal editors.
 
-### How the search ranks
+## How the search ranks
+
+![Searching the Helix source for "syntax highlight"](docs/search.gif)
 
 A query is a list of keywords, and a file matches when every keyword occurs somewhere in its content or its path. Each keyword is matched literally and ignores case unless it contains an uppercase letter, as with smart case in Helix. Two forms go beyond plain keywords: `"a phrase"` matches the words next to each other, and `/regex/` is a regular expression. The results are grouped by file. Each group starts with a header that gives the file's name, its folder and the number of matching lines, and then shows up to ten of the file's best lines.
 
 Gyre orders the files with BM25F, the scoring scheme Sourcegraph uses for its keyword search. Under BM25F a repeated match counts a little less with each repetition, while a match in a short file or on a rare keyword counts more. On top of that, some matches weigh more than others. A match in the path or on a definition, such as a `fn` line, a `#define`, a function head or a Markdown heading, counts five times, and a file that defines one of the searched names ranks twice as high. Whole words count more than parts of words, and matches in comments count half. Backups, `.patch` and `.diff` files, and generated, vendored or test code move down, whereas files that are open in VS Code and files next to the one you are working on move up. Within a file, the lines with the most keywords come first, followed by definitions.
 
-### Where the symbols come from
+## Where the symbols come from
 
 Gyre does not parse symbols itself. Like Helix's symbol pickers, it asks the language servers, here through VS Code (clangd, rust-analyzer and the like). While the query is empty, the picker lists the active file's symbols in file order, as Helix's `Space s` does; as soon as you type, it lists the workspace's symbols that match the query, as `Space S` does. The language server filters and orders these results, and Gyre then moves exact and prefix matches, functions and types, and files near the active one up, and backups, tests and build output down.
 
