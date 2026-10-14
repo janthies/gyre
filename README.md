@@ -27,7 +27,7 @@ Files are ranked the way Sourcegraph ranks keyword search (BM25F): repeated matc
 
 ### Symbols
 
-Symbols come from the language servers through VS Code (clangd, rust-analyzer, ...), like Helix's symbol pickers: with an empty query the active file's symbols in file order (Helix's `Space s`), otherwise the workspace's symbols matching the query (`Space S`). The language server filters and orders them; exact and prefix name matches, functions and types, and files next to the active one move up, backups, tests and build output down.
+Symbols come from the language servers through VS Code (clangd, rust-analyzer, ...), like Helix's symbol pickers: with an empty query the active file's symbols in file order (Helix's `Space s`), otherwise the workspace's symbols matching the query (`Space S`). The language server filters and orders them; exact and prefix name matches, functions and types, and files next to the active one move up, backups, tests and build output down. clangd loads its compile database and index only once a C file is open and finds nothing before that; if no C file is open, the picker opens the first file of the compile database in the background and asks again for a few seconds. Paths in linked folders are shown below the link (`RIOT/...`), not under their real location.
 
 ### Keys
 

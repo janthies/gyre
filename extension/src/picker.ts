@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Core, CoreMessage, Row, ThemeOptions } from './core';
-import { documentSymbols, workspaceSymbols } from './symbols';
+import { Symbols } from './symbols';
 
 export const VIEW_TYPE = 'helixPicker.view';
 /** Workbench-internal id of the modal editor group; the public ViewColumn cannot address it. */
@@ -19,6 +19,9 @@ const PREVIEW_FILE_LINES = 400;
 export type Kind = 'files' | 'search' | 'symbols';
 /** Pause after typing before the language servers are asked for symbols. */
 const SYMBOL_DELAY = 150;
+/** While a language server is still loading its index, ask again this often, this many times. */
+const SYMBOL_RETRY_MS = 1000;
+const SYMBOL_RETRIES = 6;
 type Split = 'none' | 'vertical' | 'horizontal';
 
 interface PickerState {
@@ -52,6 +55,9 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	private symbolTimer: NodeJS.Timeout | undefined;
 	/** Counts symbol requests, so a slow language server's late answer to an old query is dropped. */
 	private symbolRun = 0;
+	private symbols: Symbols | undefined;
+	/** Whether a language server has answered with workspace symbols since the picker opened. */
+	private symbolsAnswered = false;
 	private readonly pickerFile: vscode.Uri;
 
 	constructor(private readonly context: vscode.ExtensionContext, private readonly core: Core, private readonly log: vscode.OutputChannel) {
@@ -73,6 +79,8 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		}
 		this.returnColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
 		this.roots = searchRoots();
+		this.symbols = new Symbols(this.roots);
+		this.symbolsAnswered = false;
 		this.activeFile = tabPath(vscode.window.tabGroups.activeTabGroup.activeTab);
 		this.openFiles = vscode.window.tabGroups.all.flatMap(group => group.tabs.map(tabPath)).filter((p): p is string => !!p);
 		this.pending = state;
@@ -215,16 +223,34 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	private querySymbols(query: string, delay: number): void {
 		clearTimeout(this.symbolTimer);
 		const run = ++this.symbolRun;
+		const current = () => run === this.symbolRun && this.state?.kind === 'symbols';
+		const post = (items: Row[], running: boolean, error: string | null = null) =>
+			this.post({ type: 'snap', kind: 'symbols', total: items.length, matched: items.length, offset: 0, items, running, error });
 		this.symbolTimer = setTimeout(async () => {
+			const symbols = this.symbols ?? new Symbols(this.roots);
 			let items: Row[] = [];
-			let error: string | null = null;
 			try {
-				items = query.trim() ? await workspaceSymbols(query, this.roots, this.activeFile) : await documentSymbols(this.activeFile, this.roots);
+				if (!query.trim()) {
+					items = await symbols.document(this.activeFile);
+				} else {
+					items = await symbols.workspace(query, this.activeFile);
+					// A language server that is still loading its index answers with nothing at all
+					for (let attempt = 0; !items.length && !this.symbolsAnswered && attempt < SYMBOL_RETRIES && current(); attempt++) {
+						post([], true);
+						await symbols.warmUp();
+						await new Promise(resolve => setTimeout(resolve, SYMBOL_RETRY_MS));
+						items = await symbols.workspace(query, this.activeFile);
+					}
+					this.symbolsAnswered ||= items.length > 0;
+				}
 			} catch (err) {
-				error = `${err}`;
+				if (current()) {
+					post([], false, `${err}`);
+				}
+				return;
 			}
-			if (run === this.symbolRun && this.state?.kind === 'symbols') {
-				this.post({ type: 'snap', kind: 'symbols', total: items.length, matched: items.length, offset: 0, items, running: false, error });
+			if (current()) {
+				post(items, false);
 			}
 		}, delay);
 	}

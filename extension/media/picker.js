@@ -203,6 +203,8 @@
 			text = error;
 		} else if (kind === 'search' && !query.value) {
 			text = 'Type words to search the workspace: "a phrase", /a regex/.';
+		} else if (kind === 'symbols' && running && matched === 0) {
+			text = 'Asking the language server, it may still be loading its index...';
 		} else if (kind === 'symbols' && !running && matched === 0) {
 			text = query.value ? 'No symbols found.' : 'No symbols in the active file, or no language server for it. Type to search the workspace.';
 		} else if (!running && matched === 0 && (total > 0 || kind === 'search')) {
