@@ -40,12 +40,18 @@ const MAX_HIGHLIGHT_BYTES: u64 = 2 * 1024 * 1024;
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 enum Request {
-    /// Start a file picker over these folders.
-    Files { roots: Vec<PathBuf> },
+    /// Start a file picker over these folders; `hidden` includes files whose names start with a dot.
+    Files {
+        roots: Vec<PathBuf>,
+        #[serde(default)]
+        hidden: bool,
+    },
     /// Start a workspace search over these folders. `active` and `open` are the user's current
     /// and open files, for ranking; `theme` is the Helix theme for highlighting result lines.
     Search {
         roots: Vec<PathBuf>,
+        #[serde(default)]
+        hidden: bool,
         #[serde(default)]
         active: Option<PathBuf>,
         #[serde(default)]
@@ -125,6 +131,7 @@ enum Mode {
 struct Session {
     mode: Mode,
     roots: Vec<PathBuf>,
+    hidden: bool,
     query: String,
     /// Cleared by the walker or searcher thread of the current run when it finishes.
     producing: Arc<AtomicBool>,
@@ -219,7 +226,7 @@ fn main() {
 impl State {
     fn handle(&mut self, request: Request) {
         match request {
-            Request::Files { roots } => {
+            Request::Files { roots, hidden } => {
                 let notify = {
                     let (tx, pending) = (self.tx.clone(), self.matched_pending.clone());
                     Arc::new(move || {
@@ -230,17 +237,17 @@ impl State {
                 };
                 let nucleo = Nucleo::new(Config::DEFAULT.match_paths(), notify, None, 1);
                 let injector = nucleo.injector();
-                let session = self.new_session(Mode::Files { nucleo, matcher: Matcher::new(Config::DEFAULT.match_paths()) }, roots);
+                let session = self.new_session(Mode::Files { nucleo, matcher: Matcher::new(Config::DEFAULT.match_paths()) }, roots, hidden);
                 let run = self.generation.load(Ordering::Relaxed);
                 let (generation, producing, roots) = (self.generation.clone(), session.producing.clone(), session.roots.clone());
-                thread::spawn(move || walk_files(&roots, injector, &generation, run, &producing));
+                thread::spawn(move || walk_files(&roots, hidden, injector, &generation, run, &producing));
                 self.session = Some(session);
             }
-            Request::Search { roots, active, open, theme, saturation, bold_keywords } => {
+            Request::Search { roots, hidden, active, open, theme, saturation, bold_keywords } => {
                 let context = Arc::new(search::Context { roots: roots.clone(), active, open });
                 let theme_options = highlight::ThemeOptions { saturation, bold_keywords };
                 let mode = Mode::Search { context, theme, theme_options, run: None, order: Vec::new(), ranked: 0, ranked_at: Instant::now(), highlighted: HashSet::new() };
-                let session = self.new_session(mode, roots);
+                let session = self.new_session(mode, roots, hidden);
                 session.producing.store(false, Ordering::Relaxed);
                 self.session = Some(session);
             }
@@ -274,11 +281,12 @@ impl State {
         }
     }
 
-    fn new_session(&mut self, mode: Mode, roots: Vec<PathBuf>) -> Session {
+    fn new_session(&mut self, mode: Mode, roots: Vec<PathBuf>, hidden: bool) -> Session {
         self.generation.fetch_add(1, Ordering::Relaxed);
         Session {
             mode,
             roots,
+            hidden,
             query: String::new(),
             producing: Arc::new(AtomicBool::new(true)),
             restart_at: None,
@@ -337,8 +345,8 @@ impl State {
         let stats = Arc::new(search::Stats::new(query.terms.len()));
         *current = Some(SearchRun { hits: hits.clone(), stats: stats.clone() });
         session.producing.store(true, Ordering::Relaxed);
-        let (generation, producing, roots, context) = (self.generation.clone(), session.producing.clone(), session.roots.clone(), context.clone());
-        thread::spawn(move || search_files(&roots, &query, &context, &hits, &stats, &generation, run, &producing));
+        let (generation, producing, roots, hidden, context) = (self.generation.clone(), session.producing.clone(), session.roots.clone(), session.hidden, context.clone());
+        thread::spawn(move || search_files(&roots, hidden, &query, &context, &hits, &stats, &generation, run, &producing));
     }
 
     /// Sends a snapshot if the visible part changed.
@@ -501,14 +509,16 @@ fn read_source(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Walks the roots like Helix's file picker: hidden files skipped, .gitignore and .ignore honored,
-/// symbolic links followed (ignore detects link loops).
-fn walker(roots: &[PathBuf]) -> WalkBuilder {
+/// Walks the roots like Helix's file picker: .gitignore and .ignore honored, symbolic links followed
+/// (ignore detects link loops), hidden files only if asked for. Version control folders stay out
+/// either way, as in Helix.
+fn walker(roots: &[PathBuf], hidden: bool) -> WalkBuilder {
     let mut builder = WalkBuilder::new(&roots[0]);
     for root in &roots[1..] {
         builder.add(root);
     }
-    builder.hidden(true).require_git(false).follow_links(true);
+    builder.hidden(!hidden).require_git(false).follow_links(true);
+    builder.filter_entry(|entry| !matches!(entry.file_name().to_str(), Some(".git" | ".hg" | ".svn" | ".jj" | ".pijul")));
     builder
 }
 
@@ -525,8 +535,8 @@ fn display_path(path: &Path, roots: &[PathBuf]) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn walk_files(roots: &[PathBuf], injector: Injector<Item>, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
-    walker(roots).build_parallel().run(|| {
+fn walk_files(roots: &[PathBuf], hidden: bool, injector: Injector<Item>, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
+    walker(roots, hidden).build_parallel().run(|| {
         let injector = injector.clone();
         Box::new(move |entry| {
             if generation.load(Ordering::Relaxed) != run {
@@ -545,8 +555,8 @@ fn walk_files(roots: &[PathBuf], injector: Injector<Item>, generation: &AtomicU6
 }
 
 #[allow(clippy::too_many_arguments)]
-fn search_files(roots: &[PathBuf], query: &search::Query, context: &search::Context, hits: &Mutex<Vec<search::FileHit>>, stats: &search::Stats, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
-    walker(roots).build_parallel().run(|| {
+fn search_files(roots: &[PathBuf], hidden: bool, query: &search::Query, context: &search::Context, hits: &Mutex<Vec<search::FileHit>>, stats: &search::Stats, generation: &AtomicU64, run: u64, producing: &AtomicBool) {
+    walker(roots, hidden).build_parallel().run(|| {
         let mut searcher = SearcherBuilder::new().binary_detection(BinaryDetection::quit(b'\x00')).line_number(true).build();
         let mut definitions = search::Definitions::default();
         Box::new(move |entry| {

@@ -38,7 +38,7 @@ Gyre adds four commands, each with a default key:
 
 These keys are ordinary VS Code keybindings. To change one, open "Preferences: Open Keyboard Shortcuts", search for `Gyre` and record a new key, as for any other command.
 
-Once the picker is open, the three modes appear at its top, and Alt-Left and Alt-Right switch between them while the query stays. Without a workspace folder, the file and text modes search the folder of the active file. As in Helix, hidden files are skipped, `.gitignore` and `.ignore` files are honored, and symbolic links are followed. The keys inside the picker follow Helix as well:
+Once the picker is open, the three modes appear at its top, and Alt-Left and Alt-Right switch between them while the query stays. Without a workspace folder, the file and text modes search the folder of the active file. As in Helix, `.gitignore` and `.ignore` files are honored and symbolic links are followed. Unlike Helix, files whose names start with a dot are found as well, except inside `.git` and other version control folders; the setting `helixPicker.hiddenFiles` turns them off. The keys inside the picker follow Helix as well:
 
 | Key | Action |
 |---|---|
@@ -76,6 +76,7 @@ All settings live under `helixPicker` in the VS Code settings. The name predates
 | Setting | Default | Effect |
 |---|---|---|
 | `helixPicker.presentation` | `modal` | `modal` opens the centered overlay, `tab` a tab in the active editor group |
+| `helixPicker.hiddenFiles` | on | lists and searches files whose names start with a dot; `.git` and other version control folders stay out |
 | `helixPicker.fontSize` | `12` | font size of the picker in pixels |
 | `helixPicker.previewTheme` | `auto` | Helix theme for the highlighting; `auto` takes the Helix theme named like the VS Code color theme (Gruvbox Light Hard becomes `gruvbox_light_hard`), otherwise Helix's GitHub light or dark theme |
 | `helixPicker.saturation` | `1.4` | factor on the saturation of the highlight colors; colors that are already as saturated as the screen allows become a little lighter instead |

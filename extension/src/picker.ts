@@ -144,9 +144,9 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 			return;
 		}
 		if (state.kind === 'search') {
-			this.core.send({ op: 'search', roots: this.roots, active: this.activeFile, open: this.openFiles, theme: helixTheme(), ...themeOptions() });
+			this.core.send({ op: 'search', roots: this.roots, hidden: hiddenFiles(), active: this.activeFile, open: this.openFiles, theme: helixTheme(), ...themeOptions() });
 		} else {
-			this.core.send({ op: 'files', roots: this.roots });
+			this.core.send({ op: 'files', roots: this.roots, hidden: hiddenFiles() });
 		}
 		if (state.query) {
 			this.core.send({ op: 'query', text: state.query });
@@ -325,6 +325,11 @@ function helixTheme(): string {
 function themeOptions(): ThemeOptions {
 	const config = vscode.workspace.getConfiguration('helixPicker');
 	return { saturation: config.get<number>('saturation', 1.4), bold_keywords: config.get<boolean>('boldKeywords', true) };
+}
+
+/** Whether files and folders whose names start with a dot are listed and searched. */
+function hiddenFiles(): boolean {
+	return vscode.workspace.getConfiguration('helixPicker').get<boolean>('hiddenFiles', true);
 }
 
 function tabPath(tab: vscode.Tab | undefined): string | undefined {

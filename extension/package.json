@@ -60,6 +60,11 @@
 					"default": "modal",
 					"description": "Where the picker opens."
 				},
+				"helixPicker.hiddenFiles": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "List and search files and folders whose names start with a dot (`.github`, `.clang-format`, ...). Version control folders such as `.git` stay out either way. Helix hides them by default."
+				},
 				"helixPicker.fontSize": {
 					"type": "number",
 					"default": 12,

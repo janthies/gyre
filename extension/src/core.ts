@@ -82,8 +82,8 @@ export interface HighlightedRows {
 export type CoreMessage = Snapshot | Highlighted | HighlightedRows;
 
 export type CoreRequest =
-	| { op: 'files'; roots: string[] }
-	| ({ op: 'search'; roots: string[]; active?: string; open: string[]; theme: string } & ThemeOptions)
+	| { op: 'files'; roots: string[]; hidden: boolean }
+	| ({ op: 'search'; roots: string[]; hidden: boolean; active?: string; open: string[]; theme: string } & ThemeOptions)
 	| { op: 'query'; text: string }
 	| { op: 'view'; offset: number; count: number }
 	| { op: 'close' }
