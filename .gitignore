@@ -1,0 +1,5 @@
+core/target/
+extension/node_modules/
+extension/out/
+extension/bin/
+*.vsix

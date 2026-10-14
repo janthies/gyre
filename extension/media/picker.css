@@ -1,0 +1,216 @@
+:root {
+	--bg: var(--vscode-editor-background);
+	--fg: var(--vscode-editor-foreground);
+	--muted: var(--vscode-descriptionForeground);
+	--border: var(--vscode-editorWidget-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+	--selection: var(--vscode-list-activeSelectionBackground);
+	--selection-fg: var(--vscode-list-activeSelectionForeground);
+	--match: var(--vscode-list-highlightForeground, #af3a03);
+	--target: var(--vscode-editor-lineHighlightBackground, rgba(128, 128, 128, 0.15));
+	--target-border: var(--vscode-editor-lineHighlightBorder, var(--match));
+	--line-number: var(--vscode-editorLineNumber-foreground);
+	--error: var(--vscode-errorForeground, #c00);
+	--mono: var(--vscode-editor-font-family, monospace);
+	--size: var(--vscode-editor-font-size, 14px);
+	--row: 1.6em;
+}
+
+html, body {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	box-sizing: border-box;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: var(--mono);
+	font-size: var(--size);
+	overflow: hidden;
+}
+
+#picker {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	gap: 12px;
+}
+
+.box {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+#results {
+	flex-grow: 1;
+}
+
+#preview {
+	flex-grow: 1.2;
+}
+
+body.no-preview #preview {
+	display: none;
+}
+
+#prompt {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+#caret {
+	color: var(--match);
+	font-weight: bold;
+}
+
+#query {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	outline: none;
+	background: transparent;
+	color: var(--fg);
+	font: inherit;
+}
+
+#query::placeholder {
+	color: var(--muted);
+}
+
+#count {
+	color: var(--muted);
+	white-space: nowrap;
+}
+
+#count.running::after {
+	content: " …";
+}
+
+#message {
+	display: none;
+	padding: 8px 12px;
+	color: var(--muted);
+}
+
+#message.visible {
+	display: block;
+}
+
+#message.error {
+	color: var(--error);
+}
+
+#list {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+	overflow: hidden;
+}
+
+#list li {
+	height: var(--row);
+	line-height: var(--row);
+	padding: 0 8px;
+	border-radius: 4px;
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#list li.selected {
+	background: var(--selection);
+	color: var(--selection-fg);
+}
+
+#list b {
+	color: var(--match);
+	font-weight: bold;
+}
+
+#list li.selected b {
+	color: inherit;
+	text-decoration: underline;
+}
+
+#list .location {
+	color: var(--muted);
+}
+
+#list li.selected .location {
+	color: inherit;
+	opacity: 0.8;
+}
+
+#preview-title {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+	color: var(--muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	direction: rtl;
+	text-align: left;
+}
+
+#preview-body {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	padding: 6px 0;
+	line-height: 1.5;
+}
+
+#preview-body .line {
+	display: flex;
+	white-space: pre;
+	padding-right: 12px;
+}
+
+#preview-body .line.target {
+	background: var(--target);
+	box-shadow: inset 2px 0 0 var(--target-border);
+}
+
+#preview-body .number {
+	flex: none;
+	width: 6ch;
+	padding-right: 2ch;
+	text-align: right;
+	color: var(--line-number);
+	user-select: none;
+}
+
+#preview-body .placeholder {
+	padding: 0 12px;
+	color: var(--muted);
+}
+
+#keys {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 18px;
+	color: var(--muted);
+	font-size: 0.82em;
+}
+
+kbd {
+	font-family: var(--mono);
+	padding: 0 4px;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+}

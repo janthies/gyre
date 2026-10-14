@@ -1,0 +1,81 @@
+{
+	"name": "helix-picker",
+	"displayName": "Helix Picker",
+	"description": "Helix-style fuzzy file picker and workspace search with preview",
+	"publisher": "jan",
+	"version": "0.1.0",
+	"private": true,
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"main": "./out/extension.js",
+	"activationEvents": [],
+	"contributes": {
+		"commands": [
+			{
+				"command": "helixPicker.files",
+				"title": "Files",
+				"category": "Helix Picker"
+			},
+			{
+				"command": "helixPicker.search",
+				"title": "Global search",
+				"category": "Helix Picker"
+			},
+			{
+				"command": "helixPicker.resume",
+				"title": "Resume last picker",
+				"category": "Helix Picker"
+			}
+		],
+		"configuration": {
+			"title": "Helix Picker",
+			"properties": {
+				"helixPicker.presentation": {
+					"type": "string",
+					"enum": [
+						"modal",
+						"tab"
+					],
+					"enumDescriptions": [
+						"Centered overlay above the editor, like Helix.",
+						"A tab in the active editor group."
+					],
+					"default": "modal",
+					"description": "Where the picker opens."
+				},
+				"helixPicker.previewTheme": {
+					"type": "string",
+					"default": "auto",
+					"markdownDescription": "Syntax theme of the preview, by its Shiki name (for example `gruvbox-light-hard`). `auto` derives it from the VS Code color theme."
+				}
+			}
+		},
+		"customEditors": [
+			{
+				"viewType": "helixPicker.view",
+				"displayName": "Helix Picker",
+				"selector": [
+					{
+						"filenamePattern": "*.helixpicker"
+					}
+				],
+				"priority": "option"
+			}
+		]
+	},
+	"scripts": {
+		"compile": "tsc -p .",
+		"watch": "tsc -w -p ."
+	},
+	"dependencies": {
+		"shiki": "^4.5.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "1.100.0",
+		"@vscode/vsce": "2.32.0",
+		"typescript": "5.9.3"
+	}
+}

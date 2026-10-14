@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{csp}} 'unsafe-inline'; script-src {{csp}};">
+	<link rel="stylesheet" href="{{css}}">
+</head>
+<body>
+	<div id="picker">
+		<section id="results" class="box">
+			<div id="prompt">
+				<span id="caret">&gt;</span>
+				<input id="query" spellcheck="false" autocomplete="off">
+				<span id="count"></span>
+			</div>
+			<div id="message"></div>
+			<ol id="list"></ol>
+		</section>
+		<section id="preview" class="box">
+			<div id="preview-title"></div>
+			<div id="preview-body"></div>
+		</section>
+	</div>
+	<footer id="keys">
+		<span><kbd>↑↓</kbd> <kbd>C-p</kbd> <kbd>C-n</kbd> move</span>
+		<span><kbd>PgUp</kbd> <kbd>PgDn</kbd> <kbd>C-u</kbd> <kbd>C-d</kbd> page</span>
+		<span><kbd>Enter</kbd> open</span>
+		<span><kbd>C-v</kbd> <kbd>C-s</kbd> split</span>
+		<span><kbd>C-t</kbd> preview</span>
+		<span><kbd>Esc</kbd> close</span>
+	</footer>
+	<script src="{{js}}"></script>
+</body>
+</html>
