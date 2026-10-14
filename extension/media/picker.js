@@ -231,6 +231,7 @@
 	window.addEventListener('message', ({ data: msg }) => {
 		switch (msg.type) {
 			case 'init':
+				document.documentElement.style.setProperty('--size', `${msg.fontSize}px`);
 				kind = msg.kind;
 				query.value = msg.query;
 				query.placeholder = kind === 'files' ? 'Find file' : 'Search (regex)';

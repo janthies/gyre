@@ -45,6 +45,13 @@
 					"default": "modal",
 					"description": "Where the picker opens."
 				},
+				"helixPicker.fontSize": {
+					"type": "number",
+					"default": 12,
+					"minimum": 8,
+					"maximum": 32,
+					"description": "Font size of the picker in pixels."
+				},
 				"helixPicker.previewTheme": {
 					"type": "string",
 					"default": "auto",
