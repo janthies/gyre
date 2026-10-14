@@ -99,6 +99,21 @@ pub fn runtime_dirs(configured: Option<&Path>) -> Vec<PathBuf> {
     dirs
 }
 
+/// How a Helix theme is adapted for the picker.
+#[derive(Clone, Copy, PartialEq)]
+pub struct ThemeOptions {
+    /// Factor on the colors' chroma (OKLCH); 1 keeps them as they are.
+    pub saturation: f32,
+    /// Shows every `keyword...` capture in bold.
+    pub bold_keywords: bool,
+}
+
+impl Default for ThemeOptions {
+    fn default() -> Self {
+        ThemeOptions { saturation: 1.0, bold_keywords: false }
+    }
+}
+
 /// Highlight names the theme styles (for example `keyword.control`) and their CSS.
 struct Theme {
     names: Vec<String>,
@@ -114,6 +129,7 @@ impl Theme {
 pub struct Highlighter {
     dirs: Vec<PathBuf>,
     theme_name: String,
+    theme_options: ThemeOptions,
     theme: Theme,
     /// Per language; None if its grammar or queries could not be loaded.
     configs: HashMap<&'static str, Option<HighlightConfiguration>>,
@@ -124,16 +140,17 @@ pub struct Highlighter {
 
 impl Highlighter {
     pub fn new(dirs: Vec<PathBuf>) -> Self {
-        Highlighter { dirs, theme_name: String::new(), theme: Theme::empty(), configs: HashMap::new(), libraries: Vec::new(), ts: TsHighlighter::new() }
+        Highlighter { dirs, theme_name: String::new(), theme_options: ThemeOptions::default(), theme: Theme::empty(), configs: HashMap::new(), libraries: Vec::new(), ts: TsHighlighter::new() }
     }
 
     /// `names` is a comma-separated list of Helix themes; the first one that exists is used.
-    pub fn set_theme(&mut self, names: &str) {
-        if names == self.theme_name {
+    pub fn set_theme(&mut self, names: &str, options: ThemeOptions) {
+        if names == self.theme_name && options == self.theme_options {
             return;
         }
         self.theme_name = names.to_owned();
-        self.theme = names.split(',').find_map(|name| self.load_theme(name.trim())).unwrap_or_else(|| {
+        self.theme_options = options;
+        self.theme = names.split(',').find_map(|name| self.load_theme(name.trim(), options)).unwrap_or_else(|| {
             eprintln!("none of the helix themes {names:?} found");
             Theme::empty()
         });
@@ -250,12 +267,13 @@ impl Highlighter {
         out
     }
 
-    fn load_theme(&self, name: &str) -> Option<Theme> {
+    fn load_theme(&self, name: &str, options: ThemeOptions) -> Option<Theme> {
         let (palette, scopes) = self.load_theme_tables(name, 0)?;
-        let color = |value: &toml::Value| -> Option<String> {
+        let resolve = |value: &toml::Value| -> Option<String> {
             let name = value.as_str()?;
             Some(palette.get(name).and_then(toml::Value::as_str).unwrap_or(name).to_owned())
         };
+        let color = |value: &toml::Value| resolve(value).map(|c| oklch::saturate(&c, options.saturation));
         let mut theme = Theme::empty();
         for (scope, value) in &scopes {
             if scope.starts_with("ui.") || scope.starts_with("diagnostic") || ["warning", "error", "info", "hint"].contains(&scope.as_str()) {
@@ -279,6 +297,9 @@ impl Highlighter {
                     "dim" => css.push("opacity:0.7".into()),
                     _ => {}
                 }
+            }
+            if options.bold_keywords && scope.starts_with("keyword") && !css.iter().any(|c| c == "font-weight:bold") {
+                css.push("font-weight:bold".into());
             }
             if !css.is_empty() {
                 theme.names.push(scope.clone());
@@ -393,4 +414,83 @@ fn render(events: impl Iterator<Item = Result<HighlightEvent, tree_sitter_highli
         lines.push(current.finish());
     }
     lines
+}
+
+/// Color adjustments in OKLCH, which keeps the hue while changing saturation and lightness.
+mod oklch {
+    pub fn parse(hex: &str) -> Option<[f32; 3]> {
+        let hex = hex.strip_prefix('#')?;
+        let digits: Vec<u8> = match hex.len() {
+            3 => hex.chars().map(|c| c.to_digit(16).map(|d| (d * 17) as u8)).collect::<Option<_>>()?,
+            6 => (0..3).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect::<Option<_>>()?,
+            _ => return None,
+        };
+        Some([digits[0] as f32 / 255.0, digits[1] as f32 / 255.0, digits[2] as f32 / 255.0])
+    }
+
+    fn linear(c: f32) -> f32 {
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    }
+
+    fn gamma(c: f32) -> f32 {
+        if c <= 0.003_130_8 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+    }
+
+    /// Lightness, chroma and hue of an sRGB color.
+    fn from_rgb(rgb: [f32; 3]) -> (f32, f32, f32) {
+        let [r, g, b] = rgb.map(linear);
+        let l = (0.412_221_47 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+        let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+        let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+        let lightness = 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s;
+        let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+        let b = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+        (lightness, a.hypot(b), b.atan2(a))
+    }
+
+    fn to_rgb(lightness: f32, chroma: f32, hue: f32) -> [f32; 3] {
+        let (a, b) = (chroma * hue.cos(), chroma * hue.sin());
+        let l = (lightness + 0.396_337_78 * a + 0.215_803_76 * b).powi(3);
+        let m = (lightness - 0.105_561_346 * a - 0.063_854_17 * b).powi(3);
+        let s = (lightness - 0.089_484_18 * a - 1.291_485_5 * b).powi(3);
+        [
+            4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+            -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s,
+            -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+        ]
+    }
+
+    fn in_gamut(rgb: [f32; 3]) -> bool {
+        rgb.iter().all(|c| (-1e-4..=1.0 + 1e-4).contains(c))
+    }
+
+    /// Multiplies the chroma of a hex color. Many theme colors already have the most chroma sRGB
+    /// allows at their lightness; those move towards medium lightness in small steps (at most
+    /// 0.08) until the stronger color fits, and get less chroma only if that is not enough.
+    /// Greys and colors that are not hex stay as they are.
+    pub fn saturate(color: &str, saturation: f32) -> String {
+        let Some(rgb) = parse(color) else { return color.to_owned() };
+        let (lightness, chroma, hue) = from_rgb(rgb);
+        if chroma < 0.03 || saturation == 1.0 {
+            return color.to_owned();
+        }
+        let chroma = chroma * saturation;
+        let direction = if lightness < 0.65 { 0.01 } else { -0.01 };
+        let mut lightness = lightness;
+        let mut rgb = to_rgb(lightness, chroma, hue);
+        for _ in 0..8 {
+            if in_gamut(rgb) {
+                break;
+            }
+            lightness += direction;
+            rgb = to_rgb(lightness, chroma, hue);
+        }
+        let mut reduced = chroma;
+        while !in_gamut(rgb) && reduced > 0.01 {
+            reduced *= 0.97;
+            rgb = to_rgb(lightness, reduced, hue);
+        }
+        let [r, g, b] = rgb.map(|c| (gamma(c.clamp(0.0, 1.0)) * 255.0).round() as u8);
+        format!("#{r:02x}{g:02x}{b:02x}")
+    }
 }

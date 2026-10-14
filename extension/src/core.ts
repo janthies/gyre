@@ -33,7 +33,27 @@ export interface SearchLine {
 	def: boolean;
 }
 
-export type Row = FileItem | SearchFile | SearchLine;
+/** Symbol from a language server; rows of the symbol picker come from the extension, not the core. */
+export interface SymbolItem {
+	k: 's';
+	name: string;
+	/** Short kind label, for example `fn` or `struct`. */
+	kind: string;
+	container: string;
+	d: string;
+	p: string;
+	l: number;
+	/** Column (0-based) of the symbol's name. */
+	c: number;
+}
+
+export type Row = FileItem | SearchFile | SearchLine | SymbolItem;
+
+/** How the core adapts the Helix theme. */
+export interface ThemeOptions {
+	saturation: number;
+	bold_keywords: boolean;
+}
 
 export interface Snapshot {
 	t: 'snap';
@@ -63,11 +83,11 @@ export type CoreMessage = Snapshot | Highlighted | HighlightedRows;
 
 export type CoreRequest =
 	| { op: 'files'; roots: string[] }
-	| { op: 'search'; roots: string[]; active?: string; open: string[]; theme: string }
+	| ({ op: 'search'; roots: string[]; active?: string; open: string[]; theme: string } & ThemeOptions)
 	| { op: 'query'; text: string }
 	| { op: 'view'; offset: number; count: number }
 	| { op: 'close' }
-	| { op: 'highlight'; id: number; path: string; first: number; last: number; theme: string };
+	| ({ op: 'highlight'; id: number; path: string; first: number; last: number; theme: string } & ThemeOptions);
 
 export class Core implements vscode.Disposable {
 	private proc: cp.ChildProcess | undefined;

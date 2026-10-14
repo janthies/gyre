@@ -14,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.window.registerCustomEditorProvider(VIEW_TYPE, picker),
 		vscode.commands.registerCommand('helixPicker.files', () => picker.open('files')),
 		vscode.commands.registerCommand('helixPicker.search', () => picker.open('search')),
+		vscode.commands.registerCommand('helixPicker.symbols', () => picker.open('symbols')),
 		vscode.commands.registerCommand('helixPicker.resume', () => picker.resume()),
 	);
 }

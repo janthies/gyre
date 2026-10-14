@@ -6,7 +6,14 @@
 	<link rel="stylesheet" href="{{css}}">
 </head>
 <body>
-	<header id="scope"><span id="mode"></span> <span id="folders"></span></header>
+	<header id="scope">
+		<nav id="modes">
+			<button class="mode" data-kind="files">Files <kbd>A-1</kbd></button>
+			<button class="mode" data-kind="search">Text <kbd>A-2</kbd></button>
+			<button class="mode" data-kind="symbols">Symbols <kbd>A-3</kbd></button>
+		</nav>
+		<span id="folders"></span>
+	</header>
 	<div id="picker">
 		<section id="results" class="box">
 			<div id="prompt">

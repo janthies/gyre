@@ -51,13 +51,31 @@ enum Request {
         #[serde(default)]
         open: Vec<PathBuf>,
         theme: String,
+        #[serde(default = "no_change")]
+        saturation: f32,
+        #[serde(default)]
+        bold_keywords: bool,
     },
     Query { text: String },
     /// The slice of rows the picker shows.
     View { offset: u32, count: u32 },
     Close,
     /// Highlight lines `first..last` (0-based) of a file for the preview.
-    Highlight { id: u64, path: PathBuf, first: usize, last: usize, theme: String },
+    Highlight {
+        id: u64,
+        path: PathBuf,
+        first: usize,
+        last: usize,
+        theme: String,
+        #[serde(default = "no_change")]
+        saturation: f32,
+        #[serde(default)]
+        bold_keywords: bool,
+    },
+}
+
+fn no_change() -> f32 {
+    1.0
 }
 
 enum Event {
@@ -68,9 +86,9 @@ enum Event {
 }
 
 enum Job {
-    Preview { id: u64, path: PathBuf, first: usize, last: usize, theme: String },
+    Preview { id: u64, path: PathBuf, first: usize, last: usize, theme: String, options: highlight::ThemeOptions },
     /// Result lines: key, file (for its language) and text.
-    Rows { theme: String, rows: Vec<(String, PathBuf, String)> },
+    Rows { theme: String, options: highlight::ThemeOptions, rows: Vec<(String, PathBuf, String)> },
 }
 
 /// A file picker entry.
@@ -93,6 +111,7 @@ enum Mode {
     Search {
         context: Arc<search::Context>,
         theme: String,
+        theme_options: highlight::ThemeOptions,
         run: Option<SearchRun>,
         /// Ranked order of the first `ranked` hits; later hits follow in arrival order.
         order: Vec<usize>,
@@ -135,13 +154,18 @@ fn main() {
     let runtime = args.iter().position(|a| a == "--runtime").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let dirs = highlight::runtime_dirs(runtime.as_deref());
 
-    // Debugging aid: `hxp-core --highlight FILE [FIRST LAST [THEME]]` prints the highlighted lines.
+    // Debugging aid: `hxp-core --highlight FILE [FIRST LAST [THEME [SATURATION [bold]]]]` prints
+    // the highlighted lines.
     if args.get(1).map(String::as_str) == Some("--highlight") {
         let path = Path::new(&args[2]);
         let first = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(0);
         let last = args.get(4).and_then(|a| a.parse().ok()).unwrap_or(40);
         let mut highlighter = highlight::Highlighter::new(dirs);
-        highlighter.set_theme(args.get(5).map_or("gruvbox_light_hard", String::as_str));
+        let options = highlight::ThemeOptions {
+            saturation: args.get(6).and_then(|a| a.parse().ok()).unwrap_or(1.0),
+            bold_keywords: args.get(7).is_some_and(|a| a == "bold"),
+        };
+        highlighter.set_theme(args.get(5).map_or("gruvbox_light_hard", String::as_str), options);
         let source = std::fs::read_to_string(path).unwrap_or_default();
         match highlight::lang_for(path).and_then(|lang| highlighter.highlight(lang, &source, first, last)) {
             Some(lines) => lines.iter().for_each(|l| println!("{l}")),
@@ -212,9 +236,10 @@ impl State {
                 thread::spawn(move || walk_files(&roots, injector, &generation, run, &producing));
                 self.session = Some(session);
             }
-            Request::Search { roots, active, open, theme } => {
+            Request::Search { roots, active, open, theme, saturation, bold_keywords } => {
                 let context = Arc::new(search::Context { roots: roots.clone(), active, open });
-                let mode = Mode::Search { context, theme, run: None, order: Vec::new(), ranked: 0, ranked_at: Instant::now(), highlighted: HashSet::new() };
+                let theme_options = highlight::ThemeOptions { saturation, bold_keywords };
+                let mode = Mode::Search { context, theme, theme_options, run: None, order: Vec::new(), ranked: 0, ranked_at: Instant::now(), highlighted: HashSet::new() };
                 let session = self.new_session(mode, roots);
                 session.producing.store(false, Ordering::Relaxed);
                 self.session = Some(session);
@@ -242,8 +267,9 @@ impl State {
                 self.generation.fetch_add(1, Ordering::Relaxed);
                 self.session = None;
             }
-            Request::Highlight { id, path, first, last, theme } => {
-                let _ = self.jobs.send(Job::Preview { id, path, first, last, theme });
+            Request::Highlight { id, path, first, last, theme, saturation, bold_keywords } => {
+                let options = highlight::ThemeOptions { saturation, bold_keywords };
+                let _ = self.jobs.send(Job::Preview { id, path, first, last, theme, options });
             }
         }
     }
@@ -367,7 +393,7 @@ fn files_snapshot(session: &mut Session, running: bool) -> Value {
 
 /// Search results as rows: each file as a header row, followed by its matching lines.
 fn search_snapshot(session: &mut Session, running: bool, jobs: &Sender<Job>) -> Value {
-    let Mode::Search { run, order, ranked, ranked_at, theme, highlighted, .. } = &mut session.mode else { unreachable!() };
+    let Mode::Search { run, order, ranked, ranked_at, theme, theme_options, highlighted, .. } = &mut session.mode else { unreachable!() };
     let Some(run) = run else {
         return json!({ "t": "snap", "kind": "search", "total": 0, "matched": 0, "offset": 0, "items": [], "running": running, "error": session.error, "lines": 0, "searched": 0 });
     };
@@ -412,7 +438,7 @@ fn search_snapshot(session: &mut Session, running: bool, jobs: &Sender<Job>) -> 
         }
     }
     if !to_highlight.is_empty() {
-        let _ = jobs.send(Job::Rows { theme: theme.clone(), rows: to_highlight });
+        let _ = jobs.send(Job::Rows { theme: theme.clone(), options: *theme_options, rows: to_highlight });
     }
     json!({
         "t": "snap",
@@ -445,16 +471,16 @@ fn highlight_worker(jobs: Receiver<Job>, dirs: Vec<PathBuf>) {
         for job in std::iter::once(first).chain(jobs.try_iter()) {
             match job {
                 Job::Preview { .. } => preview = Some(job),
-                Job::Rows { theme, rows: more } => rows.push((theme, more)),
+                Job::Rows { theme, options, rows: more } => rows.push((theme, options, more)),
             }
         }
-        if let Some(Job::Preview { id, path, first, last, theme }) = preview {
-            highlighter.set_theme(&theme);
+        if let Some(Job::Preview { id, path, first, last, theme, options }) = preview {
+            highlighter.set_theme(&theme, options);
             let lines = read_source(&path).and_then(|source| highlight::lang_for(&path).and_then(|lang| highlighter.highlight(lang, &source, first, last)));
             emit(&json!({ "t": "hl", "id": id, "lines": lines }));
         }
-        for (theme, rows) in rows {
-            highlighter.set_theme(&theme);
+        for (theme, options, rows) in rows {
+            highlighter.set_theme(&theme, options);
             let out: Vec<Value> = rows
                 .iter()
                 .filter_map(|(key, path, text)| {

@@ -1,6 +1,6 @@
 # helix-picker
 
-A Helix-style picker for VS Code: fuzzy file picker and a ranked workspace search with a preview highlighted exactly like Helix, in a centered overlay above the editor. Not published to the Marketplace; built and installed from this repo.
+A Helix-style picker for VS Code: fuzzy file picker, ranked workspace search and symbol picker, with a preview highlighted like Helix, in a centered overlay above the editor. Not published to the Marketplace; built and installed from this repo.
 
 ## Install
 
@@ -14,15 +14,20 @@ Needs `cargo`, `npm` and the `code` command. The script builds the Rust core, co
 |---|---|
 | Helix Picker: Files | fuzzy file picker over the workspace folders |
 | Helix Picker: Global search | keyword search across the workspace, ranked by relevance |
+| Helix Picker: Symbols | symbols from the language servers: the active file's while the query is empty, the workspace's matching the query |
 | Helix Picker: Resume last picker | the last picker again, with its query and selection |
 
-Without a workspace folder, both search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
+The overlay shows the three modes on top (Files, Text, Symbols); click one or press Alt-1, Alt-2, Alt-3 to switch, the query stays. Without a workspace folder, files and text search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
 
 ### Search
 
 The query is a list of keywords; a file matches if every keyword occurs in its content or path. A keyword is matched literally and ignores case unless it contains an uppercase letter. `"a phrase"` matches the words together, `/regex/` is a regular expression. Results are grouped by file: a header with the file's name, folder and number of matching lines, then up to ten of its best lines.
 
 Files are ranked the way Sourcegraph ranks keyword search (BM25F): repeated matches count less and less, matches in short files and rare keywords count more, and matches in the path or on a definition (`fn`, `#define`, a function head, a Markdown heading, ...) count five times. A file that defines a searched name ranks twice as high. Whole words count more than parts of words, matches in comments count half. Backups, `.patch`/`.diff` files, generated, vendored and test code rank lower; files open in VS Code and files next to the one you are working on rank higher. Within a file, lines with more of the keywords come first, then definitions.
+
+### Symbols
+
+Symbols come from the language servers through VS Code (clangd, rust-analyzer, ...), like Helix's symbol pickers: with an empty query the active file's symbols in file order (Helix's `Space s`), otherwise the workspace's symbols matching the query (`Space S`). The language server filters and orders them; exact and prefix name matches, functions and types, and files next to the active one move up, backups, tests and build output down.
 
 ### Keys
 
@@ -37,6 +42,7 @@ Keys inside the picker follow Helix:
 | Ctrl-v, Ctrl-s | open in a new vertical / horizontal split |
 | Ctrl-t | toggle the preview |
 | Ctrl-w | delete the word before the cursor |
+| Alt-1, Alt-2, Alt-3 | switch to files, text, symbols |
 | Esc, Ctrl-c | close |
 
 ## Settings
@@ -44,6 +50,8 @@ Keys inside the picker follow Helix:
 - `helixPicker.presentation`: `modal` (default) opens the centered overlay, `tab` opens a tab in the active editor group. The first button in the overlay's header also moves an open picker into a tab.
 - `helixPicker.fontSize`: font size of the picker in pixels (default 12).
 - `helixPicker.previewTheme`: Helix theme for highlighting. `auto` uses the Helix theme named like the VS Code color theme (Gruvbox Light Hard becomes `gruvbox_light_hard`), otherwise Helix's GitHub light or dark theme.
+- `helixPicker.saturation`: factor on the highlight colors' saturation (default 1.4). Theme colors that are already as saturated as the screen allows get a little lighter to make room.
+- `helixPicker.boldKeywords`: keywords (`if`, `return`, `struct`, `#include`, `fn`, ...) in bold (default on).
 - `helixPicker.helixRuntime`: Helix runtime directory. Empty searches `$HELIX_RUNTIME`, `~/.config/helix/runtime` and the usual install locations, including the snap.
 
 The overlay is VS Code's modal editor (the one Settings opens in). By default it takes 80% of the window, capped at 1400×900 pixels; drag its edges or use its maximize button, and VS Code remembers the size for all modal editors.

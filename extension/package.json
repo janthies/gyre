@@ -24,6 +24,11 @@
 				"category": "Helix Picker"
 			},
 			{
+				"command": "helixPicker.symbols",
+				"title": "Symbols",
+				"category": "Helix Picker"
+			},
+			{
 				"command": "helixPicker.resume",
 				"title": "Resume last picker",
 				"category": "Helix Picker"
@@ -56,6 +61,18 @@
 					"type": "string",
 					"default": "auto",
 					"markdownDescription": "Helix theme for syntax highlighting (for example `gruvbox_light_hard`). `auto` uses the Helix theme named like the VS Code color theme, else Helix's GitHub light or dark theme."
+				},
+				"helixPicker.saturation": {
+					"type": "number",
+					"default": 1.4,
+					"minimum": 0.5,
+					"maximum": 3,
+					"markdownDescription": "Factor on the highlight colors' saturation. Colors that are already as saturated as the screen allows get a little lighter to make room; `1` keeps the theme's colors."
+				},
+				"helixPicker.boldKeywords": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show keywords (if, return, struct, #include, fn, ...) in bold."
 				},
 				"helixPicker.helixRuntime": {
 					"type": "string",

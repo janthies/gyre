@@ -8,7 +8,8 @@
 	const list = document.getElementById('list');
 	const previewTitle = document.getElementById('preview-title');
 	const previewBody = document.getElementById('preview-body');
-	const mode = document.getElementById('mode');
+	const modes = document.querySelectorAll('#modes .mode');
+	const MODES = ['files', 'search', 'symbols'];
 	const folders = document.getElementById('folders');
 
 	/** Pause before asking for a preview, so scrolling fast doesn't request every file. */
@@ -98,7 +99,27 @@
 		return template.innerHTML;
 	}
 
+	/** Positions of the query's characters in `text`, in order and ignoring case and spaces. */
+	function fuzzyPositions(text, wanted) {
+		const lower = text.toLowerCase();
+		const positions = [];
+		let from = 0;
+		for (const c of wanted.toLowerCase().replace(/\s+/g, '')) {
+			const at = lower.indexOf(c, from);
+			if (at < 0) {
+				return [];
+			}
+			positions.push(at);
+			from = at + 1;
+		}
+		return positions;
+	}
+
 	function renderItem(item) {
+		if (item.k === 's') {
+			const container = item.container ? `<span class="container">${escape(item.container)}</span>` : '';
+			return `<span class="symbol-kind">${escape(item.kind)}</span><span class="symbol">${markChars(item.name, fuzzyPositions(item.name, query.value))}</span>${container}<span class="dir">${escape(`${item.d}:${item.l}`)}</span>`;
+		}
 		if (item.k === 'f') {
 			const slash = item.d.lastIndexOf('/');
 			const name = item.d.slice(slash + 1);
@@ -119,7 +140,7 @@
 	}
 
 	function rowClass(item) {
-		return item ? { f: 'file-row', m: item.def ? 'line-row definition' : 'line-row' }[item.k] ?? '' : '';
+		return item ? { f: 'file-row', m: item.def ? 'line-row definition' : 'line-row', s: 'symbol-row' }[item.k] ?? '' : '';
 	}
 
 	function itemAt(index) {
@@ -181,7 +202,9 @@
 		if (error) {
 			text = error;
 		} else if (kind === 'search' && !query.value) {
-			text = 'Type a regex to search the workspace.';
+			text = 'Type words to search the workspace: "a phrase", /a regex/.';
+		} else if (kind === 'symbols' && !running && matched === 0) {
+			text = query.value ? 'No symbols found.' : 'No symbols in the active file, or no language server for it. Type to search the workspace.';
 		} else if (!running && matched === 0 && (total > 0 || kind === 'search')) {
 			text = 'No matches.';
 		}
@@ -191,7 +214,7 @@
 	}
 
 	function render() {
-		count.textContent = kind === 'search' ? `${total} files · ${searchLines} lines` : `${matched}/${total}`;
+		count.textContent = kind === 'search' ? `${total} files · ${searchLines} lines` : kind === 'symbols' ? `${matched} symbols` : `${matched}/${total}`;
 		count.classList.toggle('running', running);
 		renderMessage();
 		let html = '';
@@ -316,8 +339,21 @@
 			render();
 		} else if (ctrl && e.key === 'w') deleteWordBackward();
 		else if (e.key === 'Escape' || (ctrl && e.key === 'c')) vscode.postMessage({ type: 'close' });
+		else if (e.altKey && !e.ctrlKey && !e.metaKey && /^Digit[123]$/.test(e.code)) switchMode(MODES[Number(e.code.slice(5)) - 1]);
 		else return;
 		e.preventDefault();
+	});
+
+	function switchMode(next) {
+		if (next !== kind) {
+			vscode.postMessage({ type: 'mode', kind: next });
+		}
+	}
+
+	modes.forEach(button => {
+		// mousedown would move the focus to the button; the prompt keeps it
+		button.addEventListener('mousedown', e => e.preventDefault());
+		button.addEventListener('click', () => switchMode(button.dataset.kind));
 	});
 
 	window.addEventListener('message', ({ data: msg }) => {
@@ -326,8 +362,8 @@
 				document.documentElement.style.setProperty('--size', `${msg.fontSize}px`);
 				kind = msg.kind;
 				query.value = msg.query;
-				query.placeholder = kind === 'files' ? 'Find file' : 'Search (regex)';
-				mode.textContent = kind === 'files' ? 'Files in' : 'Global search in';
+				query.placeholder = { files: 'Find file', search: 'Search text', symbols: 'Find symbol (empty: active file)' }[kind];
+				modes.forEach(button => button.classList.toggle('active', button.dataset.kind === kind));
 				folders.textContent = msg.scope.join(', ');
 				selected = msg.selected;
 				offset = 0;

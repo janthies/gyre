@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Core, CoreMessage, Row } from './core';
+import { Core, CoreMessage, Row, ThemeOptions } from './core';
+import { documentSymbols, workspaceSymbols } from './symbols';
 
 export const VIEW_TYPE = 'helixPicker.view';
 /** Workbench-internal id of the modal editor group; the public ViewColumn cannot address it. */
@@ -15,7 +16,9 @@ const PREVIEW_BEFORE = 150;
 const PREVIEW_AFTER = 250;
 const PREVIEW_FILE_LINES = 400;
 
-export type Kind = 'files' | 'search';
+export type Kind = 'files' | 'search' | 'symbols';
+/** Pause after typing before the language servers are asked for symbols. */
+const SYMBOL_DELAY = 150;
 type Split = 'none' | 'vertical' | 'horizontal';
 
 interface PickerState {
@@ -31,6 +34,7 @@ type ViewMessage =
 	| { type: 'selected'; index: number }
 	| { type: 'preview'; path: string; line?: number }
 	| { type: 'open'; item: Row; split: Split }
+	| { type: 'mode'; kind: Kind }
 	| { type: 'close' };
 
 export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Disposable {
@@ -45,6 +49,9 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	/** Preview highlighting requested from the core, by request id; only the latest counts. */
 	private previewRequest: { id: number; path: string; line?: number; start: number } | undefined;
 	private previewId = 0;
+	private symbolTimer: NodeJS.Timeout | undefined;
+	/** Counts symbol requests, so a slow language server's late answer to an old query is dropped. */
+	private symbolRun = 0;
 	private readonly pickerFile: vscode.Uri;
 
 	constructor(private readonly context: vscode.ExtensionContext, private readonly core: Core, private readonly log: vscode.OutputChannel) {
@@ -114,13 +121,22 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 	}
 
 	private start(state: PickerState): void {
+		const previous = this.state?.kind;
 		this.state = { ...state };
 		const fontSize = vscode.workspace.getConfiguration('helixPicker').get<number>('fontSize', 12);
 		const scope = this.roots.map(root => root.startsWith(os.homedir()) ? '~' + root.slice(os.homedir().length) : root);
 		this.log.appendLine(`${state.kind} in ${this.roots.join(', ')}`);
 		this.post({ type: 'init', kind: state.kind, query: state.query, selected: state.selected, fontSize, scope });
+		if (state.kind === 'symbols') {
+			// Symbols come from the language servers; the core only stops what it was doing.
+			if (previous && previous !== 'symbols') {
+				this.core.send({ op: 'close' });
+			}
+			this.querySymbols(state.query, 0);
+			return;
+		}
 		if (state.kind === 'search') {
-			this.core.send({ op: 'search', roots: this.roots, active: this.activeFile, open: this.openFiles, theme: helixTheme() });
+			this.core.send({ op: 'search', roots: this.roots, active: this.activeFile, open: this.openFiles, theme: helixTheme(), ...themeOptions() });
 		} else {
 			this.core.send({ op: 'files', roots: this.roots });
 		}
@@ -138,14 +154,25 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 				}
 				break;
 			case 'query':
-				this.core.send({ op: 'query', text: msg.text });
+				if (this.state?.kind === 'symbols') {
+					this.querySymbols(msg.text, SYMBOL_DELAY);
+				} else {
+					this.core.send({ op: 'query', text: msg.text });
+				}
 				if (this.state) {
 					this.state.query = msg.text;
 					this.state.selected = 0;
 				}
 				break;
 			case 'view':
-				this.core.send({ op: 'view', offset: msg.offset, count: msg.count });
+				if (this.state?.kind !== 'symbols') {
+					this.core.send({ op: 'view', offset: msg.offset, count: msg.count });
+				}
+				break;
+			case 'mode':
+				if (this.state && msg.kind !== this.state.kind) {
+					this.start({ kind: msg.kind, query: this.state.query, selected: 0 });
+				}
 				break;
 			case 'selected':
 				if (this.state) {
@@ -184,6 +211,24 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		}
 	}
 
+	/** Asks the language servers for symbols: the active file's for an empty query, else the workspace's. */
+	private querySymbols(query: string, delay: number): void {
+		clearTimeout(this.symbolTimer);
+		const run = ++this.symbolRun;
+		this.symbolTimer = setTimeout(async () => {
+			let items: Row[] = [];
+			let error: string | null = null;
+			try {
+				items = query.trim() ? await workspaceSymbols(query, this.roots, this.activeFile) : await documentSymbols(this.activeFile, this.roots);
+			} catch (err) {
+				error = `${err}`;
+			}
+			if (run === this.symbolRun && this.state?.kind === 'symbols') {
+				this.post({ type: 'snap', kind: 'symbols', total: items.length, matched: items.length, offset: 0, items, running: false, error });
+			}
+		}, delay);
+	}
+
 	/** Sends the plain preview right away and asks the core to highlight it like Helix. */
 	private preview(file: string, line?: number): void {
 		const lines = readLines(file);
@@ -195,7 +240,7 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		const end = Math.min(lines.length, line ? line - 1 + PREVIEW_AFTER : PREVIEW_FILE_LINES);
 		this.post({ type: 'preview', path: file, line, start: start + 1, lines: lines.slice(start, end).map(escape) });
 		this.previewRequest = { id: ++this.previewId, path: file, line, start };
-		this.core.send({ op: 'highlight', id: this.previewId, path: file, first: start, last: end, theme: helixTheme() });
+		this.core.send({ op: 'highlight', id: this.previewId, path: file, first: start, last: end, theme: helixTheme(), ...themeOptions() });
 	}
 
 	private async openItem(item: Row, split: Split): Promise<void> {
@@ -215,7 +260,7 @@ export class Picker implements vscode.CustomReadonlyEditorProvider, vscode.Dispo
 		const document = await vscode.workspace.openTextDocument(uri);
 		const lineIndex = Math.min(line - 1, document.lineCount - 1);
 		const match = item.k === 'm' && item.r.length ? item.x.slice(item.r[0][0], item.r[0][1]) : '';
-		const column = match ? Math.max(0, document.lineAt(lineIndex).text.indexOf(match)) : 0;
+		const column = item.k === 's' ? item.c : match ? Math.max(0, document.lineAt(lineIndex).text.indexOf(match)) : 0;
 		const selection = new vscode.Range(lineIndex, column, lineIndex, column + match.length);
 		await vscode.window.showTextDocument(document, { viewColumn, preview: false, selection });
 	}
@@ -249,6 +294,11 @@ function helixTheme(): string {
 	const dark = kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast;
 	const preferred = configured !== 'auto' ? configured : vscodeTheme.toLowerCase().replace(/[\s-]+/g, '_');
 	return `${preferred},${dark ? 'github_dark' : 'github_light'}`;
+}
+
+function themeOptions(): ThemeOptions {
+	const config = vscode.workspace.getConfiguration('helixPicker');
+	return { saturation: config.get<number>('saturation', 1.4), bold_keywords: config.get<boolean>('boldKeywords', true) };
 }
 
 function tabPath(tab: vscode.Tab | undefined): string | undefined {

@@ -258,15 +258,75 @@ body.no-preview #preview {
 }
 
 #scope {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	min-width: 0;
 	color: var(--muted);
 	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
+}
+
+#modes {
+	display: flex;
+	flex: none;
+	gap: 6px;
+}
+
+#modes .mode {
+	font: inherit;
+	color: var(--muted);
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 3px 10px;
+	cursor: pointer;
+}
+
+#modes .mode.active {
+	color: var(--selection-fg);
+	background: var(--selection);
+	border-color: transparent;
+	font-weight: bold;
+}
+
+#modes .mode kbd {
+	margin-left: 4px;
+	font-size: 0.8em;
+	opacity: 0.7;
 }
 
 #folders {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	color: var(--fg);
 	font-weight: bold;
+}
+
+#list li.symbol-row {
+	display: flex;
+	gap: 1ch;
+}
+
+#list .symbol-kind {
+	flex: none;
+	width: 6ch;
+	color: var(--muted);
+}
+
+#list .symbol {
+	flex: none;
+	font-weight: bold;
+}
+
+#list .container {
+	flex: none;
+	color: var(--muted);
+}
+
+#list li.symbol-row .dir {
+	margin-left: auto;
+	padding-left: 2ch;
 }
 
 #keys {
