@@ -3,7 +3,7 @@
 	"displayName": "Gyre",
 	"description": "Helix-style picker for files, text and symbols, with a highlighted preview",
 	"publisher": "jan",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"private": true,
 	"license": "MIT",
 	"repository": {
