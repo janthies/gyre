@@ -340,6 +340,10 @@
 		} else if (ctrl && e.key === 'w') deleteWordBackward();
 		else if (e.key === 'Escape' || (ctrl && e.key === 'c')) vscode.postMessage({ type: 'close' });
 		else if (e.altKey && !e.ctrlKey && !e.metaKey && /^Digit[123]$/.test(e.code)) switchMode(MODES[Number(e.code.slice(5)) - 1]);
+		else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+			const step = e.key === 'ArrowRight' ? 1 : MODES.length - 1;
+			switchMode(MODES[(MODES.indexOf(kind) + step) % MODES.length]);
+		}
 		else return;
 		e.preventDefault();
 	});

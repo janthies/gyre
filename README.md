@@ -17,7 +17,7 @@ Needs `cargo`, `npm` and the `code` command. The script builds the Rust core, co
 | Helix Picker: Symbols | symbols from the language servers: the active file's while the query is empty, the workspace's matching the query |
 | Helix Picker: Resume last picker | the last picker again, with its query and selection |
 
-The overlay shows the three modes on top (Files, Text, Symbols); click one or press Alt-1, Alt-2, Alt-3 to switch, the query stays. Without a workspace folder, files and text search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
+The overlay shows the three modes on top (Files, Text, Symbols); click one, press Alt-Left/Alt-Right or Alt-1, Alt-2, Alt-3 to switch, the query stays. Without a workspace folder, files and text search the folder of the active file. Like Helix, hidden files are skipped, `.gitignore`/`.ignore` files are honored and symbolic links are followed.
 
 ### Search
 
@@ -42,6 +42,7 @@ Keys inside the picker follow Helix:
 | Ctrl-v, Ctrl-s | open in a new vertical / horizontal split |
 | Ctrl-t | toggle the preview |
 | Ctrl-w | delete the word before the cursor |
+| Alt-Left, Alt-Right | previous / next mode (files, text, symbols) |
 | Alt-1, Alt-2, Alt-3 | switch to files, text, symbols |
 | Esc, Ctrl-c | close |
 
